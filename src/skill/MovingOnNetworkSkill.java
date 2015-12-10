@@ -122,7 +122,7 @@ public class MovingOnNetworkSkill extends Skill {
 			graph.addSink(fileSink);
 			if(fileName.equals("")){
 				fileName = "C:"+File.separator+"Users"+File.separator+"Thibaut"+File.separator+"Desktop"+File.separator
-						+"Thèse"+File.separator+"Workspaces"+File.separator+"Gama_model"+File.separator+"SeineAxisModel"
+						+"Thèse"+File.separator+"Workspaces"+File.separator+"DALSim"+File.separator+"SeineAxisModel"
 						+File.separator+"results"+File.separator+"DGS"+File.separator+"Network.dgs";
 			}
 
