@@ -217,6 +217,44 @@ public class MovingOnNetworkSkill extends Skill {
 	 */
 
 	@action(
+			name = "block_road",
+			args = {
+					@arg(name = IKeywordMoNAdditional.ROAD, type = IType.AGENT, optional = false, doc = @doc("the road to block."))
+			},
+			doc =
+			@doc(value = "Block a road", examples = { @example("do block_road road:a_road;") })
+			)
+	public double blockRoadAction(final IScope scope) throws GamaRuntimeException {
+		final IAgent road = (IAgent) scope.getArg(IKeywordMoNAdditional.ROAD, IType.AGENT);
+		if(road.hasAttribute("graphstream_edge")){
+			Edge e = ((Edge)road.getAttribute("graphstream_edge"));
+			if(e.hasAttribute("old_gama_time"))
+				e.setAttribute("old_gama_time", (Double)(e.getAttribute("gama_time")));
+			else
+				e.addAttribute("old_gama_time", (Double)(e.getAttribute("gama_time")));
+			e.setAttribute("gama_time", Double.POSITIVE_INFINITY);
+		}
+		return 0.0;
+	}
+
+	@action(
+			name = "unblock_road",
+			args = {
+					@arg(name = IKeywordMoNAdditional.ROAD, type = IType.AGENT, optional = false, doc = @doc("the road to unblock."))
+			},
+			doc =
+			@doc(value = "Unblock a road", examples = { @example("do unblock_road road:a_road;") })
+			)
+	public double unblockRoadAction(final IScope scope) throws GamaRuntimeException {
+		final IAgent road = (IAgent) scope.getArg(IKeywordMoNAdditional.ROAD, IType.AGENT);
+		if(road.hasAttribute("graphstream_edge")){
+			Edge e = ((Edge)road.getAttribute("graphstream_edge"));
+			e.setAttribute("gama_time", (Double)e.getAttribute("old_gama_time"));
+		}
+		return 0.0;
+	}
+
+	@action(
 			name = "goto",
 			args = {
 					@arg(name = IKeywordMoNAdditional.TARGET, type = { IType.AGENT, IType.POINT, IType.GEOMETRY }, optional = false, doc = @doc("the location or entity towards which to move.")),
