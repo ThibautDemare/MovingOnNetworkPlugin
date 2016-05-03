@@ -27,6 +27,7 @@ import msi.gama.metamodel.agent.IAgent;
 import msi.gama.metamodel.shape.GamaPoint;
 import msi.gama.metamodel.shape.ILocation;
 import msi.gama.metamodel.shape.IShape;
+import msi.gama.metamodel.topology.ITopology;
 import msi.gama.metamodel.topology.filter.In;
 import msi.gama.metamodel.topology.graph.GraphTopology;
 import msi.gama.precompiler.GamlAnnotations.action;
@@ -122,7 +123,7 @@ public class MovingOnNetworkSkill extends Skill {
 			graph.addSink(fileSink);
 			if(fileName.equals("")){
 				fileName = "C:"+File.separator+"Users"+File.separator+"Thibaut"+File.separator+"Desktop"+File.separator
-						+"Thèse"+File.separator+"Workspaces"+File.separator+"DALSim"+File.separator+"SeineAxisModel"
+						+"ThÃ¨se"+File.separator+"Workspaces"+File.separator+"DALSim"+File.separator+"SeineAxisModel"
 						+File.separator+"results"+File.separator+"DGS"+File.separator+"Network.dgs";
 			}
 
@@ -194,6 +195,13 @@ public class MovingOnNetworkSkill extends Skill {
 		agent.setAttribute(IKeywordMoNAdditional.SPEED_ATTRIBUTE, s);
 	}
 
+	private ILocation getTarget(final IScope scope) {
+		final Object target = scope.getArg(IKeywordMoNAdditional.TARGET, IType.NONE);
+		if ( target != null && target instanceof IShape )
+			return ((ILocated) target).getLocation();
+		return null;
+	}
+
 	@getter(IKeywordMoNAdditional.DEFAULT_SPEED)
 	public Double getDefaultSpeed(final IAgent agent) {
 		return (Double) agent.getAttribute(IKeywordMoNAdditional.DEFAULT_SPEED);
@@ -219,17 +227,17 @@ public class MovingOnNetworkSkill extends Skill {
 			doc =
 			@doc(value = "moves the agent towards the target passed in the arguments.", returns = "the path followed by the agent.", examples = { @example("do goto target: (one_of road).location on: road_network;") })
 			)
-	public GamaList gotoAction(final IScope scope) throws GamaRuntimeException {
+	public double gotoAction(final IScope scope) throws GamaRuntimeException {
 		final IAgent agent = getCurrentAgent(scope);
 		init(scope, agent);
 
 		// The source is the current location of the current agent
 		final ILocation source = agent.getLocation().copy(scope);
 		// The target is the location of the thing passing through argument (an agent or a point or a geometry)
-		final ILocation target = findTargetLocation(scope);
-		if(currentTarget != target){
+		final ILocation target = getTarget(scope);
+		if(currentTarget == null || !currentTarget.equals(target)){
 			// Need to compute the path
-			computeShortestPath(scope, source, target);
+			agent.setAttribute("pathLength", computeShortestPath(scope, source, target));
 			currentTarget = target;
 			agentFromOutsideToInside = true;
 			agentInside = false;
@@ -243,13 +251,13 @@ public class MovingOnNetworkSkill extends Skill {
 		if(currentCycle != scope.getClock().getCycle()){
 			currentCycle = scope.getClock().getCycle();
 			// Color the Gama network according to the flow let by agents
-			colorGamaGraph("cumulative_marks");//cumulative_nb_agents
+			colorGamaGraph("current_marks");//cumulative_nb_agents//cumulative_marks
 			graph.stepBegins(currentCycle);
 			for(Edge e : graph.getEachEdge()){
 				if(e.getNumber("current_marks") != 0)
-					e.setAttribute("current_marks", e.getNumber("current_marks")*0.5);
+					e.setAttribute("current_marks", e.getNumber("current_marks")*0.98);
 				if(e.getNumber("current_nb_agents") != 0)
-					e.setAttribute("current_nb_agents", e.getNumber("current_marks")*0.5);
+					e.setAttribute("current_nb_agents", e.getNumber("current_nb_agents")*0.98);
 			}
 		}
 
@@ -286,8 +294,7 @@ public class MovingOnNetworkSkill extends Skill {
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-
-		return gl;
+		return 0.0;
 	}
 
 	private void init(final IScope scope, final IAgent agent) {
@@ -346,7 +353,6 @@ public class MovingOnNetworkSkill extends Skill {
 		graph = (Graph) scope.getSimulationScope().getAttribute("gs_graph");
 		if(graph == null)
 			throw GamaRuntimeException.error("You have not declare a graph on which the agent can move.");
-
 		fileSink = (FileSinkDGSFiltered) scope.getSimulationScope().getAttribute("fileSink");
 	}
 
@@ -534,7 +540,6 @@ public class MovingOnNetworkSkill extends Skill {
 				// Move the agent
 				if(remainingTime >= time){
 					currentLocation.setLocation(x_target, y_target);
-					agent.setLocation(currentLocation);
 				}
 				else{
 					double coef = remainingTime / time;
@@ -700,14 +705,7 @@ public class MovingOnNetworkSkill extends Skill {
 		return new Coordinate(x_dest, y_dest);
 	}
 
-	private ILocation findTargetLocation(final IScope scope) {
-		final Object target = scope.getArg("target", IType.NONE);
-		if ( target != null && target instanceof ILocated )
-			return ((ILocated) target).getLocation();
-		return null;
-	}
-
-	private void computeShortestPath(final IScope scope, ILocation source, ILocation target){
+	private double computeShortestPath(final IScope scope, ILocation source, ILocation target){
 		if(dijkstra == null){
 			dijkstra = new Dijkstra(Dijkstra.Element.EDGE, "result", "gama_time");
 			dijkstra.init(graph);
@@ -717,12 +715,13 @@ public class MovingOnNetworkSkill extends Skill {
 		 *  Find the graphstream source and target node
 		 */
 		GraphTopology gt = (GraphTopology)(Cast.asTopology(scope, gamaGraph));
+		ITopology topo = scope.getSimulationScope().getTopology();
 		// Find the source node
-		IAgent gamaSourceEdge = gt.getAgentClosestTo(scope, source, In.edgesOf(gt.getPlaces()));
+		IAgent gamaSourceEdge = topo.getAgentClosestTo(scope, source, In.edgesOf(gt.getPlaces()));//gt.getAgentClosestTo(scope, source, In.edgesOf(gt.getPlaces()));
 		Edge gsSourceEdge = (Edge)gamaSourceEdge.getAttribute("graphstream_edge");
 		Node sourceNode = gsSourceEdge.getNode0();
 		// Find the target node
-		IAgent gamaTargetEdge = gt.getAgentClosestTo(scope, target, In.edgesOf(gt.getPlaces()));
+		IAgent gamaTargetEdge = topo.getAgentClosestTo(scope, target, In.edgesOf(gt.getPlaces()));//gt.getAgentClosestTo(scope, target, In.edgesOf(gt.getPlaces()));
 		Edge gsTargetEdge = (Edge)gamaTargetEdge.getAttribute("graphstream_edge");
 		Node targetNode = gsTargetEdge.getNode0();
 
@@ -740,7 +739,6 @@ public class MovingOnNetworkSkill extends Skill {
 		/*
 		 * Add closest edge(s)
 		 */
-
 		// Add closest source edge to the path if it is missing
 		if(!p.contains(gsSourceEdge)){
 			sourceNode = gsSourceEdge.getNode1();
@@ -759,6 +757,8 @@ public class MovingOnNetworkSkill extends Skill {
 		currentGsPathNode = p.getNodePath();
 		if(currentGsPathEdge.size() != 0)
 			currentGsPathNode.remove(0);// The first node is useless
+
+		return p.getPathWeight("gama_time");
 	}
 
 	/**
@@ -874,7 +874,7 @@ public class MovingOnNetworkSkill extends Skill {
 			if(e.hasAttribute(attr) && e.getNumber(attr) > 0)
 				eVal = e.getNumber(attr);
 			for(Edges es : list){
-				final double EPSILON = 50;
+				final double EPSILON = 1;
 				if( ((es.value - eVal) * (es.value - eVal) < EPSILON * EPSILON) ){
 				//if(es.value - 1 <= eVal && eVal <= es.value + 1){
 				//if(eVal == es.value){
@@ -927,7 +927,7 @@ public class MovingOnNetworkSkill extends Skill {
 		public int compareTo(Edges e) {
 			if(e.value == value)
 				return 0;
-			if(value - 1 < e.value)
+			if(value < e.value)
 				return 1;
 			else
 				return -1;
