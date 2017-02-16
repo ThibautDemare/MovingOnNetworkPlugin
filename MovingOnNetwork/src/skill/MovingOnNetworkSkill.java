@@ -22,7 +22,7 @@ import com.vividsolutions.jts.geom.LineString;
 import com.vividsolutions.jts.geom.Point;
 
 import msi.gama.common.interfaces.ILocated;
-import msi.gama.common.util.GeometryUtils;
+import msi.gama.common.geometry.GeometryUtils;
 import msi.gama.metamodel.agent.IAgent;
 import msi.gama.metamodel.shape.GamaPoint;
 import msi.gama.metamodel.shape.ILocation;
@@ -42,15 +42,14 @@ import msi.gama.precompiler.GamlAnnotations.vars;
 import msi.gama.runtime.GAMA;
 import msi.gama.runtime.IScope;
 import msi.gama.runtime.exceptions.GamaRuntimeException;
-import msi.gama.util.GamaList;
 import msi.gama.util.GamaListFactory;
+import msi.gama.util.IList;
 import msi.gama.util.graph.GraphUtilsGraphStream;
 import msi.gama.util.graph.IGraph;
 import msi.gama.util.graph._Edge;
 import msi.gama.util.graph._Vertex;
 import msi.gaml.operators.Cast;
 import msi.gaml.skills.Skill;
-import msi.gaml.types.GamaAgentType;
 import msi.gaml.types.IType;
 
 @doc("This skill is intended to move an agent on a network according to speed and length attributes on the edges. When The agent is not already on the graph, we assume that the length is an euclidean length and we use a default speed given by the user.")
@@ -160,14 +159,14 @@ public class MovingOnNetworkSkill extends Skill {
 
 			MovingOnNetworkSkill.gamaGraph = gamaGraph;
 
-			scope.getSimulationScope().setAttribute("gs_graph", graph);
-			scope.getSimulationScope().setAttribute("fileSink", fileSink);
+			scope.getSimulation().setAttribute("gs_graph", graph);
+			scope.getSimulation().setAttribute("fileSink", fileSink);
 		}
 	}
 
 	@getter(IKeywordMoNAdditional.GRAPH)
 	public IGraph getGraph(final IAgent agent) {
-		if(agent.getScope().getSimulationScope().getAttribute("gs_graph") != null)
+		if(agent.getScope().getSimulation().getAttribute("gs_graph") != null)
 			return gamaGraph;
 		else
 			return null;
@@ -199,6 +198,13 @@ public class MovingOnNetworkSkill extends Skill {
 		final Object target = scope.getArg(IKeywordMoNAdditional.TARGET, IType.NONE);
 		if ( target != null && target instanceof IShape )
 			return ((ILocated) target).getLocation();
+		return null;
+	}
+
+	private ILocation getSource(final IScope scope) {
+		final Object source = scope.getArg(IKeywordMoNAdditional.SOURCE, IType.NONE);
+		if ( source != null && source instanceof IShape )
+			return ((ILocated) source).getLocation();
 		return null;
 	}
 
@@ -255,9 +261,24 @@ public class MovingOnNetworkSkill extends Skill {
 	}
 
 	@action(
-			name = "goto",
+			name = "compute_path_length2",
 			args = {
-					@arg(name = IKeywordMoNAdditional.TARGET, type = { IType.AGENT, IType.POINT, IType.GEOMETRY }, optional = false, doc = @doc("the location or entity towards which to move.")),
+					@arg(name = IKeywordMoNAdditional.SOURCE, type = IType.GEOMETRY , optional = false, doc = @doc("the source of the path.")),
+					@arg(name = IKeywordMoNAdditional.TARGET, type = IType.GEOMETRY , optional = false, doc = @doc("the target of the path."))
+			},
+			doc =
+			@doc(value = "Compute the path length", examples = { @example("") })
+			)
+	public double computeLengthPathAction(final IScope scope) throws GamaRuntimeException {
+		final ILocation source = getSource(scope);
+		final ILocation target = getTarget(scope);
+		return computeShortestPath(scope, source, target);
+	}
+
+	@action(
+			name = "go_to",
+			args = {
+					@arg(name = IKeywordMoNAdditional.TARGET, type = IType.GEOMETRY , optional = false, doc = @doc("the location or entity towards which to move.")),
 					@arg(name = IKeywordMoNAdditional.LENGTH_ATTRIBUTE, type = IType.STRING, optional = true, doc = @doc("the name of the variable containing the length of an edge.")),
 					@arg(name = IKeywordMoNAdditional.SPEED_ATTRIBUTE, type = IType.STRING, optional = true, doc = @doc("the name of the varaible containing the speed on an edge.")),
 					@arg(name = IKeywordMoNAdditional.MARK, type = IType.FLOAT, optional = true, doc = @doc("The mark (a value) left on the agent's route.")),
@@ -284,7 +305,7 @@ public class MovingOnNetworkSkill extends Skill {
 			indexSegment = -1;
 		}
 		// The path has been computed, we need to know how many time the agent has in order to make the move.
-		remainingTime = scope.getClock().getStep();
+		remainingTime = scope.getClock().getStepInSeconds(); // TODO : check if the value of step should be in second
 
 		if(currentCycle != scope.getClock().getCycle()){
 			currentCycle = scope.getClock().getCycle();
@@ -299,7 +320,7 @@ public class MovingOnNetworkSkill extends Skill {
 			}
 		}
 
-		GamaList gl;
+		IList gl;
 		if(currentGsPathEdge.size()==0 && agentFromOutsideToInside){
 			reachAndLeave(scope, agent, target);
 			gl = null;
@@ -324,8 +345,8 @@ public class MovingOnNetworkSkill extends Skill {
 		agent.setAttribute("currentGsPathNode", currentGsPathNode);
 		agent.setAttribute("currentTarget", currentTarget);
 
-		scope.getSimulationScope().setAttribute("gs_graph", graph);
-		scope.getSimulationScope().setAttribute("fileSink", fileSink);
+		scope.getSimulation().setAttribute("gs_graph", graph);
+		scope.getSimulation().setAttribute("fileSink", fileSink);
 
 		try {
 			fileSink.flush();
@@ -372,7 +393,7 @@ public class MovingOnNetworkSkill extends Skill {
 		if(length_attribute == null || !((String)scope.getArg(IKeywordMoNAdditional.LENGTH_ATTRIBUTE, IType.STRING)).equals(length_attribute) ){
 			final Object la = scope.getArg(IKeywordMoNAdditional.LENGTH_ATTRIBUTE, IType.STRING);
 			if(la == null){
-				throw GamaRuntimeException.error("You have not declare a length attribute.");
+				throw GamaRuntimeException.error("You have not declare a length attribute.", scope);
 			}
 			setLengthAttribute(agent, (String)la);
 		}
@@ -382,16 +403,16 @@ public class MovingOnNetworkSkill extends Skill {
 			final Object sa = scope.getArg(IKeywordMoNAdditional.SPEED_ATTRIBUTE, IType.STRING);
 
 			if(sa == null){
-				throw GamaRuntimeException.error("You have not declare a speed attribute.");
+				throw GamaRuntimeException.error("You have not declare a speed attribute.", scope);
 			}
 			setSpeedAttribute(agent, (String)sa);
 		}
 
 		// The user must have set the graph before (if not, we throw an error)
-		graph = (Graph) scope.getSimulationScope().getAttribute("gs_graph");
+		graph = (Graph) scope.getSimulation().getAttribute("gs_graph");
 		if(graph == null)
-			throw GamaRuntimeException.error("You have not declare a graph on which the agent can move.");
-		fileSink = (FileSinkDGSFiltered) scope.getSimulationScope().getAttribute("fileSink");
+			throw GamaRuntimeException.error("You have not declare a graph on which the agent can move.", scope);
+		fileSink = (FileSinkDGSFiltered) scope.getSimulation().getAttribute("fileSink");
 	}
 
 	private void reachAndLeave(final IScope scope, final IAgent agent, final ILocation target){
@@ -449,7 +470,7 @@ public class MovingOnNetworkSkill extends Skill {
 			for ( int i = 0; i < coords.length - 1; i++ ) {
 				tempCoord[0] = coords[i];
 				tempCoord[1] = coords[i + 1];
-				LineString segment = GeometryUtils.FACTORY.createLineString(tempCoord);
+				LineString segment = GeometryUtils.GEOMETRY_FACTORY.createLineString(tempCoord);
 				double distS = segment.distance(currentPointLocation);
 				if ( distS < distAgentToNetwork ) {
 					distAgentToNetwork = distS;
@@ -489,12 +510,12 @@ public class MovingOnNetworkSkill extends Skill {
 		}
 	}
 
-	private GamaList movingInside(final IScope scope, final IAgent agent, final ILocation target){
+	private IList movingInside(final IScope scope, final IAgent agent, final ILocation target){
 		if(agentInside && remainingTime > 0){
 			double mark = (Double) scope.getArg(IKeywordMoNAdditional.MARK, IType.FLOAT);
 			GamaPoint currentLocation = (GamaPoint) agent.getLocation().copy(scope);
 			// It follows the path on the graph, node by node
-			GamaList gl = GamaListFactory.EMPTY_LIST;
+			IList gl = GamaListFactory.create();
 
 			// Does the agent need to reach the next Node?
 			if(!agentOnANode){
@@ -633,7 +654,7 @@ public class MovingOnNetworkSkill extends Skill {
 			for ( int j = 0; j < coords.length - 1; j++ ) {
 				tempCoord[0] = coords[j];
 				tempCoord[1] = coords[j + 1];
-				LineString segment = GeometryUtils.FACTORY.createLineString(tempCoord);
+				LineString segment = GeometryUtils.GEOMETRY_FACTORY.createLineString(tempCoord);
 				double distS = segment.distance(target.getInnerGeometry());
 				if ( distS < distTargetToNetwork ) {
 					distTargetToNetwork = distS;
@@ -753,7 +774,7 @@ public class MovingOnNetworkSkill extends Skill {
 		 *  Find the graphstream source and target node
 		 */
 		GraphTopology gt = (GraphTopology)(Cast.asTopology(scope, gamaGraph));
-		ITopology topo = scope.getSimulationScope().getTopology();
+		ITopology topo = scope.getSimulation().getTopology();
 		// Find the source node
 		IAgent gamaSourceEdge = topo.getAgentClosestTo(scope, source, In.edgesOf(gt.getPlaces()));//gt.getAgentClosestTo(scope, source, In.edgesOf(gt.getPlaces()));
 		Edge gsSourceEdge = (Edge)gamaSourceEdge.getAttribute("graphstream_edge");
