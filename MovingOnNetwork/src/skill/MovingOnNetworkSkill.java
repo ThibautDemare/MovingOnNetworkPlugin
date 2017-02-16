@@ -121,9 +121,12 @@ public class MovingOnNetworkSkill extends Skill {
 			fileSink = new FileSinkDGSFiltered();
 			graph.addSink(fileSink);
 			if(fileName.equals("")){
-				fileName = "C:"+File.separator+"Users"+File.separator+"Thibaut"+File.separator+"Desktop"+File.separator
-						+"Thèse"+File.separator+"Workspaces"+File.separator+"DALSim"+File.separator+"SeineAxisModel"
-						+File.separator+"results"+File.separator+"DGS"+File.separator+"Network.dgs";
+				try {
+					fileName = new File(new File("."), "../Model.v2/workspace-model/DALSim/results/DGS/Network.dgs").getCanonicalPath();
+				} catch (IOException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
 			}
 
 			try {
