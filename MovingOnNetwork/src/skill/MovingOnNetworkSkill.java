@@ -44,6 +44,7 @@ import msi.gama.runtime.IScope;
 import msi.gama.runtime.exceptions.GamaRuntimeException;
 import msi.gama.util.GamaListFactory;
 import msi.gama.util.IList;
+import msi.gama.util.graph.GamaGraph;
 import msi.gama.util.graph.GraphUtilsGraphStream;
 import msi.gama.util.graph.IGraph;
 import msi.gama.util.graph._Edge;
@@ -55,28 +56,10 @@ import msi.gaml.types.IType;
 @doc("This skill is intended to move an agent on a network according to speed and length attributes on the edges. When The agent is not already on the graph, we assume that the length is an euclidean length and we use a default speed given by the user.")
 @vars({
 	@var(
-			name = IKeywordMoNAdditional.LENGTH_ATTRIBUTE,
-			type = IType.STRING,
-			init = "'length'",
-			doc = @doc("The attribute giving the length of the edge. Be careful : this variable is shared by all moving agent.")),
-	@var(
-			name = IKeywordMoNAdditional.SPEED_ATTRIBUTE,
-			type = IType.STRING,
-			init = "'speed'",
-			doc = @doc("The attribute giving the default speed. Be careful : this variable is shared by all moving agent.")),
-	@var(
 			name = IKeywordMoNAdditional.DEFAULT_SPEED,
 			type = IType.FLOAT,
 			init = "19.4444",
 			doc = @doc("The speed outside the graph (in meter/second). Default : 70km/h.")),
-	@var(
-			name = IKeywordMoNAdditional.GRAPH,
-			type = IType.GRAPH,
-			doc = @doc("The graph or network on which the agent moves.")),
-	@var(
-			name = IKeywordMoNAdditional.FILENAME,
-			type = IType.STRING,
-			doc = @doc("The name of the DGS file and its path where the graph must be saved.")),
 	@var(
 			name = IKeywordMoNAdditional.PATH_LENGTH,
 			type = IType.FLOAT,
@@ -85,17 +68,24 @@ import msi.gaml.types.IType;
 @skill(name = IKeywordMoNAdditional.MOVING_ON_NETWORK)
 public class MovingOnNetworkSkill extends Skill {
 	/*
+	 * Utils
+	 */
+	private class DataNetwork {
+		private Dijkstra dijkstra;
+		private Graph graph;
+		private FileSinkDGSFiltered fileSink;
+		private GamaGraph gamaGraph;
+		private String fileName;
+		private String lengthAttribute;
+		private String speedAttribute;
+	}
+
+	/*
 	 * Static variables
 	 */
-	private static Dijkstra dijkstra = null;
-	private static Graph graph = null;
-	private static IGraph gamaGraph = null;
-	private static String length_attribute = null;
-	private static String speed_attribute = null;
-	private static FileSinkDGSFiltered fileSink = null;
-	private static String fileName = "";
 	private static int currentCycle = 0;
-
+	private static HashMap<String, DataNetwork> listNetwork;
+	private static DataNetwork currentDataNetwork;
 	/*
 	 * Non-static variables
 	 */
@@ -113,88 +103,12 @@ public class MovingOnNetworkSkill extends Skill {
 	 * Getters and setters
 	 */
 
-	@setter(IKeywordMoNAdditional.GRAPH)
-	public void setGraph(final IScope scope, final IAgent agent, final IGraph gamaGraph) {
-		if(gamaGraph != null){
-			graph = new MultiGraph("tmpGraph", true, false);
-			dijkstra = null;
-			fileSink = new FileSinkDGSFiltered();
-			graph.addSink(fileSink);
-			if(fileName.equals("")){
-				try {
-					fileName = new File(new File("."), "../Model.v2/workspace-model/DALSim/results/DGS/Network.dgs").getCanonicalPath();
-				} catch (IOException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				}
-			}
-
-			try {
-				fileSink.begin(fileName);
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
-
-			currentCycle = 0;
-
-			// Filter useless attributes in edges
-			fileSink.addEdgeAttributeFiltered("gama_agent");
-			fileSink.addEdgeAttributeFiltered("color");
-			fileSink.addEdgeAttributeFiltered("graphstream_edge");
-			fileSink.addEdgeAttributeFiltered("gama_time");
-
-			// No need to save graph attributes
-			fileSink.setNoFilterGraphAttributeAdded(false);
-			fileSink.setNoFilterGraphAttributeChanged(false);
-			fileSink.setNoFilterGraphAttributeRemoved(false);
-
-			// and no need either of result which contains Dijsktra reference
-			fileSink.addNodeAttributeFiltered("result");
-
-			graph.stepBegins(currentCycle);
-			getGraphstreamGraphFromGamaGraph(scope, gamaGraph, graph);
-
-			try {
-				fileSink.flush();
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
-
-			MovingOnNetworkSkill.gamaGraph = gamaGraph;
-
-			scope.getSimulation().setAttribute("gs_graph", graph);
-			scope.getSimulation().setAttribute("fileSink", fileSink);
-		}
-	}
-
 	@getter(IKeywordMoNAdditional.GRAPH)
 	public IGraph getGraph(final IAgent agent) {
 		if(agent.getScope().getSimulation().getAttribute("gs_graph") != null)
-			return gamaGraph;
+			return currentDataNetwork.gamaGraph;
 		else
 			return null;
-	}
-
-	@getter(IKeywordMoNAdditional.LENGTH_ATTRIBUTE)
-	public String getLengthAttribute(final IAgent agent) {
-		return (String) agent.getAttribute(IKeywordMoNAdditional.LENGTH_ATTRIBUTE);
-	}
-
-	@setter(IKeywordMoNAdditional.LENGTH_ATTRIBUTE)
-	public void setLengthAttribute(final IAgent agent, final String s) {
-		length_attribute = s;
-		agent.setAttribute(IKeywordMoNAdditional.LENGTH_ATTRIBUTE, s);
-	}
-
-	@getter(IKeywordMoNAdditional.SPEED_ATTRIBUTE)
-	public String getSpeedAttribute(final IAgent agent) {
-		return (String) agent.getAttribute(IKeywordMoNAdditional.SPEED_ATTRIBUTE);
-	}
-
-	@setter(IKeywordMoNAdditional.SPEED_ATTRIBUTE)
-	public void setSpeedAttribute(final IAgent agent, final String s) {
-		speed_attribute = s;
-		agent.setAttribute(IKeywordMoNAdditional.SPEED_ATTRIBUTE, s);
 	}
 
 	private ILocation getTarget(final IScope scope) {
@@ -224,6 +138,73 @@ public class MovingOnNetworkSkill extends Skill {
 	/*
 	 * Actions/methods
 	 */
+
+	@action(
+			name = "add_network",
+			args = {
+					@arg(name = IKeywordMoNAdditional.NAME, type = IType.STRING, optional = false, doc = @doc("the name of the network.")),
+					@arg(name = IKeywordMoNAdditional.GRAPH, type = IType.GRAPH, optional = false, doc = @doc("the network to add.")),
+					@arg(name = IKeywordMoNAdditional.LENGTH_ATTRIBUTE, type = IType.STRING, optional = true, doc = @doc("the name of the variable containing the length of an edge.")),
+					@arg(name = IKeywordMoNAdditional.SPEED_ATTRIBUTE, type = IType.STRING, optional = true, doc = @doc("the name of the varaible containing the speed on an edge."))
+			},
+			doc =
+			@doc(value = "Add a network.", examples = { @example("do add_network name:'maritime' network:maritime_network length_attribute:'length' speed_attribute:'speed';") })
+			)
+	public void addNetwork(final IScope scope) throws GamaRuntimeException {
+		if(listNetwork == null){
+			listNetwork = new HashMap<String, MovingOnNetworkSkill.DataNetwork>();
+		}
+
+		DataNetwork dn = new DataNetwork();
+		currentDataNetwork = dn;
+		dn.lengthAttribute = (String) scope.getArg(IKeywordMoNAdditional.LENGTH_ATTRIBUTE, IType.STRING);;
+		dn.speedAttribute = (String) scope.getArg(IKeywordMoNAdditional.SPEED_ATTRIBUTE, IType.STRING);;
+		String name = (String) scope.getArg(IKeywordMoNAdditional.NAME, IType.STRING);
+		GamaGraph gamaGraph = (GamaGraph) scope.getArg(IKeywordMoNAdditional.GRAPH, IType.GRAPH);
+		dn.gamaGraph = gamaGraph;
+		Graph graph = new MultiGraph("tmpGraph", true, false);
+		dn.graph = graph;
+		Dijkstra dijkstra = null;
+		dn.dijkstra = dijkstra;
+		FileSinkDGSFiltered fileSink = new FileSinkDGSFiltered();
+		dn.fileSink = fileSink;
+		graph.addSink(fileSink);
+		String fileName = "";
+		try {
+			fileName = new File(new File("."), "../workspace-model/DALSim/results/DGS/Network_"+name+".dgs").getCanonicalPath();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+
+		try {
+			fileSink.begin(fileName);
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+
+		// Filter useless attributes in edges
+		fileSink.addEdgeAttributeFiltered("gama_agent");
+		fileSink.addEdgeAttributeFiltered("color");
+		fileSink.addEdgeAttributeFiltered("graphstream_edge");
+		fileSink.addEdgeAttributeFiltered("gama_time");
+
+		// No need to save graph attributes
+		fileSink.setNoFilterGraphAttributeAdded(false);
+		fileSink.setNoFilterGraphAttributeChanged(false);
+		fileSink.setNoFilterGraphAttributeRemoved(false);
+
+		// and no need either of result which contains Dijsktra reference
+		fileSink.addNodeAttributeFiltered("result");
+		graph.stepBegins(currentCycle);
+		getGraphstreamGraphFromGamaGraph(scope, gamaGraph, graph);
+
+		try {
+			fileSink.flush();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		listNetwork.put(name, dn);
+	}
 
 	@action(
 			name = "block_road",
@@ -282,8 +263,6 @@ public class MovingOnNetworkSkill extends Skill {
 			name = "go_to",
 			args = {
 					@arg(name = IKeywordMoNAdditional.TARGET, type = IType.GEOMETRY , optional = false, doc = @doc("the location or entity towards which to move.")),
-					@arg(name = IKeywordMoNAdditional.LENGTH_ATTRIBUTE, type = IType.STRING, optional = true, doc = @doc("the name of the variable containing the length of an edge.")),
-					@arg(name = IKeywordMoNAdditional.SPEED_ATTRIBUTE, type = IType.STRING, optional = true, doc = @doc("the name of the varaible containing the speed on an edge.")),
 					@arg(name = IKeywordMoNAdditional.MARK, type = IType.FLOAT, optional = true, doc = @doc("The mark (a value) left on the agent's route.")),
 			},
 			doc =
@@ -297,6 +276,7 @@ public class MovingOnNetworkSkill extends Skill {
 		final ILocation source = agent.getLocation().copy(scope);
 		// The target is the location of the thing passing through argument (an agent or a point or a geometry)
 		final ILocation target = getTarget(scope);
+
 		if(currentTarget == null || !currentTarget.equals(target)){
 			// Need to compute the path
 			agent.setAttribute("pathLength", computeShortestPath(scope, source, target));
@@ -312,14 +292,16 @@ public class MovingOnNetworkSkill extends Skill {
 
 		if(currentCycle != scope.getClock().getCycle()){
 			currentCycle = scope.getClock().getCycle();
-			// Color the Gama network according to the flow let by agents
-			colorGamaGraph("current_marks");//cumulative_nb_agents//cumulative_marks
-			graph.stepBegins(currentCycle);
-			for(Edge e : graph.getEachEdge()){
-				if(e.getNumber("current_marks") != 0)
-					e.setAttribute("current_marks", e.getNumber("current_marks")*0.98);
-				if(e.getNumber("current_nb_agents") != 0)
-					e.setAttribute("current_nb_agents", e.getNumber("current_nb_agents")*0.98);
+			for(DataNetwork dn : listNetwork.values()){
+				// Color the Gama network according to the flow let by agents
+				colorGamaGraph(dn.graph, "current_marks");//cumulative_nb_agents//cumulative_marks
+				dn.graph.stepBegins(currentCycle);
+				for(Edge e : dn.graph.getEachEdge()){
+					if(e.getNumber("current_marks") != 0)
+						e.setAttribute("current_marks", e.getNumber("current_marks")*0.9);
+					if(e.getNumber("current_nb_agents") != 0)
+						e.setAttribute("current_nb_agents", e.getNumber("current_nb_agents")*0.9);
+				}
 			}
 		}
 
@@ -348,11 +330,8 @@ public class MovingOnNetworkSkill extends Skill {
 		agent.setAttribute("currentGsPathNode", currentGsPathNode);
 		agent.setAttribute("currentTarget", currentTarget);
 
-		scope.getSimulation().setAttribute("gs_graph", graph);
-		scope.getSimulation().setAttribute("fileSink", fileSink);
-
 		try {
-			fileSink.flush();
+			currentDataNetwork.fileSink.flush();
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -392,30 +371,8 @@ public class MovingOnNetworkSkill extends Skill {
 		if(agent.hasAttribute("currentTarget"))
 			currentTarget = (ILocation) agent.getAttribute("currentTarget");
 
-		// If the user has not given the length argument, so he must have set it before (if not, we throw an error)
-		if(length_attribute == null || !((String)scope.getArg(IKeywordMoNAdditional.LENGTH_ATTRIBUTE, IType.STRING)).equals(length_attribute) ){
-			final Object la = scope.getArg(IKeywordMoNAdditional.LENGTH_ATTRIBUTE, IType.STRING);
-			if(la == null){
-				throw GamaRuntimeException.error("You have not declare a length attribute.", scope);
-			}
-			setLengthAttribute(agent, (String)la);
-		}
-
-		// If the user has not given the speed argument, so he must have set it before (if not, we throw an error)
-		if(speed_attribute == null || !((String)scope.getArg(IKeywordMoNAdditional.SPEED_ATTRIBUTE, IType.STRING)).equals(speed_attribute) ){
-			final Object sa = scope.getArg(IKeywordMoNAdditional.SPEED_ATTRIBUTE, IType.STRING);
-
-			if(sa == null){
-				throw GamaRuntimeException.error("You have not declare a speed attribute.", scope);
-			}
-			setSpeedAttribute(agent, (String)sa);
-		}
-
-		// The user must have set the graph before (if not, we throw an error)
-		graph = (Graph) scope.getSimulation().getAttribute("gs_graph");
-		if(graph == null)
-			throw GamaRuntimeException.error("You have not declare a graph on which the agent can move.", scope);
-		fileSink = (FileSinkDGSFiltered) scope.getSimulation().getAttribute("fileSink");
+		String name = (String)agent.getAttribute("networkType");
+		currentDataNetwork = listNetwork.get(name);
 	}
 
 	private void reachAndLeave(final IScope scope, final IAgent agent, final ILocation target){
@@ -516,7 +473,7 @@ public class MovingOnNetworkSkill extends Skill {
 	private IList movingInside(final IScope scope, final IAgent agent, final ILocation target){
 		if(agentInside && remainingTime > 0){
 			double mark = (Double) scope.getArg(IKeywordMoNAdditional.MARK, IType.FLOAT);
-			GamaPoint currentLocation = (GamaPoint) agent.getLocation().copy(scope);
+			ILocation currentLocation = (ILocation) agent.getLocation().copy(scope);
 			// It follows the path on the graph, node by node
 			IList gl = GamaListFactory.create();
 
@@ -540,7 +497,7 @@ public class MovingOnNetworkSkill extends Skill {
 
 			while(remainingTime > 0 && !currentGsPathEdge.isEmpty()){
 				Edge edge = currentGsPathEdge.get(0);
-				double time = edge.getNumber(getLengthAttribute(agent))*100000 / (edge.getNumber(getSpeedAttribute(agent))*1000/3600);
+				double time = edge.getNumber(currentDataNetwork.lengthAttribute)*100000 / (edge.getNumber(currentDataNetwork.speedAttribute)*1000/3600);
 				// currentGsPath.size()== 1 when the agent is at the end of the path,
 				// therefore it must stop before the next node in order to leave the network
 				// But he can also stop before the end of an edge if he has not enough remaining time
@@ -602,6 +559,7 @@ public class MovingOnNetworkSkill extends Skill {
 				// Move the agent
 				if(remainingTime >= time){
 					currentLocation.setLocation(x_target, y_target);
+					currentTarget = null;
 				}
 				else{
 					double coef = remainingTime / time;
@@ -678,7 +636,7 @@ public class MovingOnNetworkSkill extends Skill {
 			double y_agent = currentLocation.getY();
 
 			double dist = Math.sqrt((x_agent - dest.x)*(x_agent - dest.x) + (y_agent - dest.y)*(y_agent - dest.y));
-			double time = dist / (e.getNumber(getSpeedAttribute(agent))*1000/3600);
+			double time = dist / (e.getNumber(currentDataNetwork.speedAttribute)*1000/3600);
 
 			// Move the agent
 			if(remainingTime >= time){
@@ -768,31 +726,31 @@ public class MovingOnNetworkSkill extends Skill {
 	}
 
 	private double computeShortestPath(final IScope scope, ILocation source, ILocation target){
-		if(dijkstra == null){
-			dijkstra = new Dijkstra(Dijkstra.Element.EDGE, "result", "gama_time");
-			dijkstra.init(graph);
+		if(currentDataNetwork.dijkstra == null){
+			currentDataNetwork.dijkstra = new Dijkstra(Dijkstra.Element.EDGE, "result", "gama_time");
+			currentDataNetwork.dijkstra.init(currentDataNetwork.graph);
 		}
 
 		/*
 		 *  Find the graphstream source and target node
 		 */
-		GraphTopology gt = (GraphTopology)(Cast.asTopology(scope, gamaGraph));
+		GraphTopology gt = (GraphTopology)(Cast.asTopology(scope, currentDataNetwork.gamaGraph));
 		ITopology topo = scope.getSimulation().getTopology();
 		// Find the source node
 		IAgent gamaSourceEdge = topo.getAgentClosestTo(scope, source, In.edgesOf(gt.getPlaces()));//gt.getAgentClosestTo(scope, source, In.edgesOf(gt.getPlaces()));
-		Edge gsSourceEdge = (Edge)gamaSourceEdge.getAttribute("graphstream_edge");
+		Edge gsSourceEdge = (Edge)gamaSourceEdge.getAttribute("mon_graphstream_edge");
 		Node sourceNode = gsSourceEdge.getNode0();
 		// Find the target node
 		IAgent gamaTargetEdge = topo.getAgentClosestTo(scope, target, In.edgesOf(gt.getPlaces()));//gt.getAgentClosestTo(scope, target, In.edgesOf(gt.getPlaces()));
-		Edge gsTargetEdge = (Edge)gamaTargetEdge.getAttribute("graphstream_edge");
+		Edge gsTargetEdge = (Edge)gamaTargetEdge.getAttribute("mon_graphstream_edge");
 		Node targetNode = gsTargetEdge.getNode0();
 
 		/*
 		 *  Compute and get the path
 		 */
-		dijkstra.setSource(sourceNode);
-		dijkstra.compute();
-		Path p = dijkstra.getPath(targetNode);
+		currentDataNetwork.dijkstra.setSource(sourceNode);
+		currentDataNetwork.dijkstra.compute();
+		Path p = currentDataNetwork.dijkstra.getPath(targetNode);
 
 		double length = p.getPathWeight("gama_time");
 		final IAgent agent = getCurrentAgent(scope);
@@ -804,15 +762,15 @@ public class MovingOnNetworkSkill extends Skill {
 		// Add closest source edge to the path if it is missing
 		if(!p.contains(gsSourceEdge)){
 			sourceNode = gsSourceEdge.getNode1();
-			dijkstra.setSource(sourceNode);
-			dijkstra.compute();
-			p = dijkstra.getPath(targetNode);
+			currentDataNetwork.dijkstra.setSource(sourceNode);
+			currentDataNetwork.dijkstra.compute();
+			p = currentDataNetwork.dijkstra.getPath(targetNode);
 		}
 
 		// Add closest target edge to the path if it is missing
 		if(!p.contains(gsTargetEdge)){
 			targetNode = gsTargetEdge.getNode1();
-			p = dijkstra.getPath(targetNode);
+			p = currentDataNetwork.dijkstra.getPath(targetNode);
 		}
 
 		currentGsPathEdge = p.getEdgePath();
@@ -832,7 +790,6 @@ public class MovingOnNetworkSkill extends Skill {
 	 */
 	private static void getGraphstreamGraphFromGamaGraph(IScope scope, final IGraph gamaGraph, Graph g) {
 		Map<Object, Node> gamaNode2graphStreamNode = new HashMap<Object, Node>(gamaGraph._internalNodesSet().size());
-
 		// add nodes
 		for ( Object v : gamaGraph._internalVertexMap().keySet() ) {
 			_Vertex vertex = (_Vertex) gamaGraph._internalVertexMap().get(v);
@@ -855,7 +812,6 @@ public class MovingOnNetworkSkill extends Skill {
 				n.setAttribute("z", sh.getLocation().getZ());
 			}
 		}
-
 		// add edges
 		for ( Object edgeObj : gamaGraph._internalEdgeMap().keySet() ) {
 			_Edge edge = (_Edge) gamaGraph._internalEdgeMap().get(edgeObj);
@@ -872,13 +828,13 @@ public class MovingOnNetworkSkill extends Skill {
 						if(value != null)
 							e.addAttribute(key.toString(), value.toString());
 					}
-					e.addAttribute("gama_time", e.getNumber(length_attribute) * e.getNumber(speed_attribute));
+					e.addAttribute("gama_time", e.getNumber(currentDataNetwork.lengthAttribute) * e.getNumber(currentDataNetwork.speedAttribute));
 					e.setAttribute("current_marks", 0.0);
 					e.setAttribute("cumulative_marks", 0.0);
 					e.setAttribute("cumulative_nb_agents", 0.0);
 					e.setAttribute("current_nb_agents", 0.0);
 					// a know e
-					a.setAttribute("graphstream_edge", e);
+					a.setAttribute("mon_graphstream_edge", e);
 				}
 			} catch (EdgeRejectedException e) {
 				GAMA.reportError(scope, GamaRuntimeException
@@ -891,7 +847,6 @@ public class MovingOnNetworkSkill extends Skill {
 			}
 
 		}
-
 		// some basic tests for integrity
 		if ( gamaGraph.getVertices().size() != g.getNodeCount() ) {
 			GAMA.reportError(scope,
@@ -911,16 +866,21 @@ public class MovingOnNetworkSkill extends Skill {
 	 * Color the Gama graph according to the given attributes' value on the edges
 	 * @param attr The attribute containing the value allowing the coloring
 	 */
-	private void colorGamaGraph(String attr){
+	private void colorGamaGraph(Graph g, String attr){
 		SortedList listEdge = new SortedList();
-		for(Edge e: graph.getEachEdge()) {
+		for(Edge e: g.getEachEdge()) {
 			listEdge.add(e, attr);
 		}
 		listEdge.sort();
 		for(int i = 0; i < listEdge.size(); i++){
-			for(Edge e : listEdge.get(i).getEdges() )
-				//((valForMaxHuff-valForMinHuff) / (length(dests)-1)) * (i) + valForMinHuff
-				((IAgent)(e.getAttribute("gama_agent"))).setAttribute("colorValue", ( (200.0 - 30) / (listEdge.size() - 1)) * i + 30);
+			for(Edge e : listEdge.get(i).getEdges() ){
+				if(listEdge.size() == 1){
+					((IAgent)(e.getAttribute("gama_agent"))).setAttribute("colorValue", ( (200.0 - 30) / (listEdge.size() - 1)) * i + 30);
+				}
+				else {
+					((IAgent)(e.getAttribute("gama_agent"))).setAttribute("colorValue", 255);
+				}
+			}
 		}
 	}
 
