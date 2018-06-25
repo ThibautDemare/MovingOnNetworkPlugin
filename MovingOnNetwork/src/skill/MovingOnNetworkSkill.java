@@ -207,44 +207,6 @@ public class MovingOnNetworkSkill extends Skill {
 	}
 
 	@action(
-			name = "block_road",
-			args = {
-					@arg(name = IKeywordMoNAdditional.ROAD, type = IType.AGENT, optional = false, doc = @doc("the road to block."))
-			},
-			doc =
-			@doc(value = "Block a road", examples = { @example("do block_road road:a_road;") })
-			)
-	public double blockRoadAction(final IScope scope) throws GamaRuntimeException {
-		final IAgent road = (IAgent) scope.getArg(IKeywordMoNAdditional.ROAD, IType.AGENT);
-		if(road.hasAttribute("graphstream_edge")){
-			Edge e = ((Edge)road.getAttribute("graphstream_edge"));
-			if(e.hasAttribute("old_gama_time"))
-				e.setAttribute("old_gama_time", (Double)(e.getAttribute("gama_time")));
-			else
-				e.addAttribute("old_gama_time", (Double)(e.getAttribute("gama_time")));
-			e.setAttribute("gama_time", Double.POSITIVE_INFINITY);
-		}
-		return 0.0;
-	}
-
-	@action(
-			name = "unblock_road",
-			args = {
-					@arg(name = IKeywordMoNAdditional.ROAD, type = IType.AGENT, optional = false, doc = @doc("the road to unblock."))
-			},
-			doc =
-			@doc(value = "Unblock a road", examples = { @example("do unblock_road road:a_road;") })
-			)
-	public double unblockRoadAction(final IScope scope) throws GamaRuntimeException {
-		final IAgent road = (IAgent) scope.getArg(IKeywordMoNAdditional.ROAD, IType.AGENT);
-		if(road.hasAttribute("graphstream_edge")){
-			Edge e = ((Edge)road.getAttribute("graphstream_edge"));
-			e.setAttribute("gama_time", (Double)e.getAttribute("old_gama_time"));
-		}
-		return 0.0;
-	}
-
-	@action(
 			name = "compute_path_length2",
 			args = {
 					@arg(name = IKeywordMoNAdditional.SOURCE, type = IType.GEOMETRY , optional = false, doc = @doc("the source of the path.")),
@@ -298,9 +260,9 @@ public class MovingOnNetworkSkill extends Skill {
 				dn.graph.stepBegins(currentCycle);
 				for(Edge e : dn.graph.getEachEdge()){
 					if(e.getNumber("current_marks") != 0)
-						e.setAttribute("current_marks", e.getNumber("current_marks")*0.9);
+						e.setAttribute("current_marks", e.getNumber("current_marks")*0.95);
 					if(e.getNumber("current_nb_agents") != 0)
-						e.setAttribute("current_nb_agents", e.getNumber("current_nb_agents")*0.9);
+						e.setAttribute("current_nb_agents", e.getNumber("current_nb_agents")*0.95);
 				}
 			}
 		}
@@ -874,7 +836,7 @@ public class MovingOnNetworkSkill extends Skill {
 		listEdge.sort();
 		for(int i = 0; i < listEdge.size(); i++){
 			for(Edge e : listEdge.get(i).getEdges() ){
-				if(listEdge.size() == 1){
+				if(listEdge.size() != 1){
 					((IAgent)(e.getAttribute("gama_agent"))).setAttribute("colorValue", ( (200.0 - 30) / (listEdge.size() - 1)) * i + 30);
 				}
 				else {
