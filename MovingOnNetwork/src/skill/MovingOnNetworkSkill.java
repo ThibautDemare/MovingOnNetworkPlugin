@@ -2,11 +2,13 @@ package skill;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 
 import org.graphstream.algorithm.Dijkstra;
 import org.graphstream.graph.Edge;
@@ -37,8 +39,9 @@ import msi.gama.precompiler.GamlAnnotations.example;
 import msi.gama.precompiler.GamlAnnotations.getter;
 import msi.gama.precompiler.GamlAnnotations.setter;
 import msi.gama.precompiler.GamlAnnotations.skill;
-import msi.gama.precompiler.GamlAnnotations.var;
+import msi.gama.precompiler.GamlAnnotations.variable;
 import msi.gama.precompiler.GamlAnnotations.vars;
+import msi.gama.precompiler.GamlAnnotations;
 import msi.gama.runtime.GAMA;
 import msi.gama.runtime.IScope;
 import msi.gama.runtime.exceptions.GamaRuntimeException;
@@ -55,60 +58,69 @@ import msi.gaml.types.IType;
 
 @doc("This skill is intended to move an agent on a network according to speed and length attributes on the edges. When The agent is not already on the graph, we assume that the length is an euclidean length and we use a default speed given by the user.")
 @vars({
-	@var(
+	@variable (
 			name = IKeywordMoNAdditional.DEFAULT_SPEED,
 			type = IType.FLOAT,
 			init = "19.4444",
 			doc = @doc("The speed outside the graph (in meter/second). Default : 70km/h.")),
-	@var(
+	@variable(
 			name = IKeywordMoNAdditional.PATH_LENGTH,
 			type = IType.FLOAT,
 			doc = @doc("The length of the computed path.")),
 })
 @skill(name = IKeywordMoNAdditional.MOVING_ON_NETWORK)
 public class MovingOnNetworkSkill extends Skill {
-	/*
-	 * Utils
-	 */
-	private class DataNetwork {
-		private Dijkstra dijkstra;
-		private Graph graph;
-		private FileSinkDGSFiltered fileSink;
-		private GamaGraph gamaGraph;
-		private String fileName;
-		private String lengthAttribute;
-		private String speedAttribute;
+
+	private class DataSimulation {
+		/*
+		 * Utils
+		 */
+		private class DataNetwork {
+			private Dijkstra dijkstra;
+			private Graph graph;
+			private FileSinkDGSFiltered fileSink;
+			private GamaGraph gamaGraph;
+			private String fileName;
+			private String lengthAttribute;
+			private String speedAttribute;
+		}
+
+		/*
+		 * Static variables
+		 */
+		private int currentCycle = 0;
+		private HashMap<String, DataNetwork> listNetwork;
+		private DataNetwork currentDataNetwork;
+		/*
+		 * Non-static variables
+		 */
+		private double remainingTime;
+		private boolean agentFromOutsideToInside;
+		private boolean agentInside;
+		private boolean agentFromInsideToOutside;
+		private boolean agentOnANode;
+		private int indexSegment;
+		private List<Edge> currentGsPathEdge;
+		private List<Node> currentGsPathNode;
+		private ILocation currentTarget;
+		private double seed;
 	}
 
-	/*
-	 * Static variables
-	 */
-	private static int currentCycle = 0;
-	private static HashMap<String, DataNetwork> listNetwork;
-	private static DataNetwork currentDataNetwork;
-	/*
-	 * Non-static variables
-	 */
-	private double remainingTime;
-	private boolean agentFromOutsideToInside;
-	private boolean agentInside;
-	private boolean agentFromInsideToOutside;
-	private boolean agentOnANode;
-	private int indexSegment;
-	private List<Edge> currentGsPathEdge;
-	private List<Node> currentGsPathNode;
-	private ILocation currentTarget;
+	// All the data used by this plugin are stored into this variable, itself stored as an attribute of a simulation.
+	// Therefore, this plugin can be used with simulation executed in parallel.
+	private static DataSimulation currentSimulation;
 
 	/*
 	 * Getters and setters
 	 */
 
-	@getter(IKeywordMoNAdditional.GRAPH)
-	public IGraph getGraph(final IAgent agent) {
-		if(agent.getScope().getSimulation().getAttribute("gs_graph") != null)
-			return currentDataNetwork.gamaGraph;
-		else
-			return null;
+	public void getCurrentSimulation(final IScope scope) {
+		currentSimulation = (DataSimulation) scope.getSimulation().getAttribute("gaml.extensions.moving.on.network.dataSimulation");
+		if(currentSimulation == null) {
+			currentSimulation = new DataSimulation();
+			currentSimulation.seed = scope.getSimulation().getSeed();
+			scope.getSimulation().setAttribute("gaml.extensions.moving.on.network.dataSimulation", currentSimulation);
+		}
 	}
 
 	private ILocation getTarget(final IScope scope) {
@@ -151,12 +163,13 @@ public class MovingOnNetworkSkill extends Skill {
 			@doc(value = "Add a network.", examples = { @example("do add_network name:'maritime' network:maritime_network length_attribute:'length' speed_attribute:'speed';") })
 			)
 	public void addNetwork(final IScope scope) throws GamaRuntimeException {
-		if(listNetwork == null){
-			listNetwork = new HashMap<String, MovingOnNetworkSkill.DataNetwork>();
+		getCurrentSimulation(scope);
+		if(currentSimulation.listNetwork == null){
+			currentSimulation.listNetwork = new HashMap<String, MovingOnNetworkSkill.DataSimulation.DataNetwork>();
 		}
 
-		DataNetwork dn = new DataNetwork();
-		currentDataNetwork = dn;
+		DataSimulation.DataNetwork dn = currentSimulation.new DataNetwork();
+		currentSimulation.currentDataNetwork = dn;
 		dn.lengthAttribute = (String) scope.getArg(IKeywordMoNAdditional.LENGTH_ATTRIBUTE, IType.STRING);;
 		dn.speedAttribute = (String) scope.getArg(IKeywordMoNAdditional.SPEED_ATTRIBUTE, IType.STRING);;
 		String name = (String) scope.getArg(IKeywordMoNAdditional.NAME, IType.STRING);
@@ -168,10 +181,12 @@ public class MovingOnNetworkSkill extends Skill {
 		dn.dijkstra = dijkstra;
 		FileSinkDGSFiltered fileSink = new FileSinkDGSFiltered();
 		dn.fileSink = fileSink;
-		graph.addSink(fileSink);
+		//graph.addSink(fileSink);
 		String fileName = "";
 		try {
-			fileName = new File(new File("."), "../workspace-model/DALSim/results/DGS/Network_"+name+".dgs").getCanonicalPath();
+			fileName = "./Network_"+name+".dgs";
+			File yourFile = new File(fileName);
+			yourFile.createNewFile(); // if file already exists will do nothing
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -195,15 +210,15 @@ public class MovingOnNetworkSkill extends Skill {
 
 		// and no need either of result which contains Dijsktra reference
 		fileSink.addNodeAttributeFiltered("result");
-		graph.stepBegins(currentCycle);
-		getGraphstreamGraphFromGamaGraph(scope, gamaGraph, graph);
+		graph.stepBegins(currentSimulation.currentCycle);
+		getGraphstreamGraphFromGamaGraph(scope, currentSimulation, gamaGraph, graph);
 
 		try {
 			fileSink.flush();
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-		listNetwork.put(name, dn);
+		currentSimulation.listNetwork.put(name, dn);
 	}
 
 	@action(
@@ -231,6 +246,7 @@ public class MovingOnNetworkSkill extends Skill {
 			@doc(value = "moves the agent towards the target passed in the arguments.", returns = "the path followed by the agent.", examples = { @example("do goto target: (one_of road).location on: road_network;") })
 			)
 	public double gotoAction(final IScope scope) throws GamaRuntimeException {
+		getCurrentSimulation(scope);
 		final IAgent agent = getCurrentAgent(scope);
 		init(scope, agent);
 
@@ -239,25 +255,25 @@ public class MovingOnNetworkSkill extends Skill {
 		// The target is the location of the thing passing through argument (an agent or a point or a geometry)
 		final ILocation target = getTarget(scope);
 
-		if(currentTarget == null || !currentTarget.equals(target)){
+		if(currentSimulation.currentTarget == null || !currentSimulation.currentTarget.equals(target)){
 			// Need to compute the path
 			agent.setAttribute("pathLength", computeShortestPath(scope, source, target));
-			currentTarget = target;
-			agentFromOutsideToInside = true;
-			agentInside = false;
-			agentFromInsideToOutside = false;
-			agentOnANode = false;
-			indexSegment = -1;
+			currentSimulation.currentTarget = target;
+			currentSimulation.agentFromOutsideToInside = true;
+			currentSimulation.agentInside = false;
+			currentSimulation.agentFromInsideToOutside = false;
+			currentSimulation.agentOnANode = false;
+			currentSimulation.indexSegment = -1;
 		}
 		// The path has been computed, we need to know how many time the agent has in order to make the move.
-		remainingTime = scope.getClock().getStepInSeconds(); // TODO : check if the value of step should be in second
+		currentSimulation.remainingTime = scope.getClock().getStepInSeconds(); // TODO : check if the value of step should be in second
 
-		if(currentCycle != scope.getClock().getCycle()){
-			currentCycle = scope.getClock().getCycle();
-			for(DataNetwork dn : listNetwork.values()){
+		if(currentSimulation.currentCycle != scope.getClock().getCycle()){
+			currentSimulation.currentCycle = scope.getClock().getCycle();
+			for(DataSimulation.DataNetwork dn : currentSimulation.listNetwork.values()){
 				// Color the Gama network according to the flow let by agents
 				colorGamaGraph(dn.graph, "current_marks");//cumulative_nb_agents//cumulative_marks
-				dn.graph.stepBegins(currentCycle);
+				dn.graph.stepBegins(currentSimulation.currentCycle);
 				for(Edge e : dn.graph.getEachEdge()){
 					if(e.getNumber("current_marks") != 0)
 						e.setAttribute("current_marks", e.getNumber("current_marks")*0.95);
@@ -268,7 +284,7 @@ public class MovingOnNetworkSkill extends Skill {
 		}
 
 		IList gl;
-		if(currentGsPathEdge.size()==0 && agentFromOutsideToInside){
+		if(currentSimulation.currentGsPathEdge.size()==0 && currentSimulation.agentFromOutsideToInside){
 			reachAndLeave(scope, agent, target);
 			gl = null;
 		}
@@ -283,17 +299,17 @@ public class MovingOnNetworkSkill extends Skill {
 			movingFromInsideToOutside(scope, agent, target);
 		}
 
-		agent.setAttribute("agentFromOutsideToInside", agentFromOutsideToInside);
-		agent.setAttribute("agentInside", agentInside);
-		agent.setAttribute("agentFromInsideToOutside", agentFromInsideToOutside);
-		agent.setAttribute("agentOnANode", agentOnANode);
-		agent.setAttribute("indexSegment", indexSegment);
-		agent.setAttribute("currentGsPathEdge", currentGsPathEdge);
-		agent.setAttribute("currentGsPathNode", currentGsPathNode);
-		agent.setAttribute("currentTarget", currentTarget);
+		agent.setAttribute("agentFromOutsideToInside", currentSimulation.agentFromOutsideToInside);
+		agent.setAttribute("agentInside", currentSimulation.agentInside);
+		agent.setAttribute("agentFromInsideToOutside", currentSimulation.agentFromInsideToOutside);
+		agent.setAttribute("agentOnANode", currentSimulation.agentOnANode);
+		agent.setAttribute("indexSegment", currentSimulation.indexSegment);
+		agent.setAttribute("currentGsPathEdge", currentSimulation.currentGsPathEdge);
+		agent.setAttribute("currentGsPathNode", currentSimulation.currentGsPathNode);
+		agent.setAttribute("currentTarget", currentSimulation.currentTarget);
 
 		try {
-			currentDataNetwork.fileSink.flush();
+			currentSimulation.currentDataNetwork.fileSink.flush();
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -301,47 +317,47 @@ public class MovingOnNetworkSkill extends Skill {
 	}
 
 	private void init(final IScope scope, final IAgent agent) {
-		agentFromOutsideToInside = true;
+		currentSimulation.agentFromOutsideToInside = true;
 		if(agent.hasAttribute("agentFromOutsideToInside"))
-			agentFromOutsideToInside = (Boolean) agent.getAttribute("agentFromOutsideToInside");
+			currentSimulation.agentFromOutsideToInside = (Boolean) agent.getAttribute("agentFromOutsideToInside");
 
-		agentInside = false;
+		currentSimulation.agentInside = false;
 		if(agent.hasAttribute("agentInside"))
-			agentInside = (Boolean) agent.getAttribute("agentInside");
+			currentSimulation.agentInside = (Boolean) agent.getAttribute("agentInside");
 
-		agentFromInsideToOutside = false;
+		currentSimulation.agentFromInsideToOutside = false;
 		if(agent.hasAttribute("agentFromInsideToOutside"))
-			agentFromInsideToOutside = (Boolean) agent.getAttribute("agentFromInsideToOutside");
+			currentSimulation.agentFromInsideToOutside = (Boolean) agent.getAttribute("agentFromInsideToOutside");
 
-		agentOnANode = false;
+		currentSimulation.agentOnANode = false;
 		if(agent.hasAttribute("agentOnANode"))
-			agentOnANode = (Boolean) agent.getAttribute("agentOnANode");
+			currentSimulation.agentOnANode = (Boolean) agent.getAttribute("agentOnANode");
 
-		indexSegment = -1;
+		currentSimulation.indexSegment = -1;
 		if(agent.hasAttribute("indexSegment"))
-			indexSegment = (Integer) agent.getAttribute("indexSegment");
+			currentSimulation.indexSegment = (Integer) agent.getAttribute("indexSegment");
 
-		currentGsPathEdge = null;
+		currentSimulation.currentGsPathEdge = null;
 		if(agent.hasAttribute("currentGsPathEdge"))
-			currentGsPathEdge = (List<Edge>) agent.getAttribute("currentGsPathEdge");
+			currentSimulation.currentGsPathEdge = (List<Edge>) agent.getAttribute("currentGsPathEdge");
 
-		currentGsPathNode = null;
+		currentSimulation.currentGsPathNode = null;
 		if(agent.hasAttribute("currentGsPathNode"))
-			currentGsPathNode = (List<Node>) agent.getAttribute("currentGsPathNode");
+			currentSimulation.currentGsPathNode = (List<Node>) agent.getAttribute("currentGsPathNode");
 
-		currentTarget = null;// We use this variable to know if we already have computed the shortest path
+		currentSimulation.currentTarget = null;// We use this variable to know if we already have computed the shortest path
 		if(agent.hasAttribute("currentTarget"))
-			currentTarget = (ILocation) agent.getAttribute("currentTarget");
+			currentSimulation.currentTarget = (ILocation) agent.getAttribute("currentTarget");
 
 		String name = (String)agent.getAttribute("networkType");
-		currentDataNetwork = listNetwork.get(name);
+		currentSimulation.currentDataNetwork = currentSimulation.listNetwork.get(name);
 	}
 
 	private void reachAndLeave(final IScope scope, final IAgent agent, final ILocation target){
-		if(remainingTime > 0){
+		if(currentSimulation.remainingTime > 0){
 			Coordinate dest;
-			if(!agentInside){
-				dest = new Coordinate(currentGsPathNode.get(0).getNumber("x"), currentGsPathNode.get(0).getNumber("y"));
+			if(!currentSimulation.agentInside){
+				dest = new Coordinate(currentSimulation.currentGsPathNode.get(0).getNumber("x"), currentSimulation.currentGsPathNode.get(0).getNumber("y"));
 			}
 			else{
 				dest = new Coordinate(target.getX(), target.getY());
@@ -355,25 +371,25 @@ public class MovingOnNetworkSkill extends Skill {
 			double dist = Math.hypot(xc - dest.x, yc - dest.y);
 			double time = dist / getDefaultSpeed(agent);// We use the default speed because the agent is not yet on the network
 
-			if(remainingTime >= time){
+			if(currentSimulation.remainingTime >= time){
 				currentLocation.setLocation(dest.x, dest.y);
 				agent.setLocation(currentLocation);
-				agentInside = true;
+				currentSimulation.agentInside = true;
 			}
 			else{
-				double coef = remainingTime / time;
+				double coef = currentSimulation.remainingTime / time;
 				double x_inter = xc + (dest.x - xc) * coef;
 				double y_inter = yc + (dest.y - yc) * coef;
 				currentLocation.setLocation(x_inter, y_inter);
 				agent.setLocation(currentLocation);
 			}
 
-			remainingTime -= time;
+			currentSimulation.remainingTime -= time;
 		}
 	}
 
 	private void movingFromOutsideToInside(final IScope scope, final IAgent agent){
-		if(agentFromOutsideToInside && remainingTime > 0){
+		if(currentSimulation.agentFromOutsideToInside && currentSimulation.remainingTime > 0){
 			/*
 			 *  First step : find the closest segment to the agent
 			 *  Indeed, one edge of the path could be made with more than one segment
@@ -382,7 +398,7 @@ public class MovingOnNetworkSkill extends Skill {
 			GamaPoint currentLocation = (GamaPoint) agent.getLocation().copy(scope);
 			Point currentPointLocation = (Point) agent.getLocation().copy(scope).getInnerGeometry();
 			// The closest road
-			IAgent gamaRoad = currentGsPathEdge.get(0).getAttribute("gama_agent");
+			IAgent gamaRoad = currentSimulation.currentGsPathEdge.get(0).getAttribute("gama_agent");
 
 			// Find the closest segment among the road's
 			double distAgentToNetwork = Double.MAX_VALUE;
@@ -414,85 +430,85 @@ public class MovingOnNetworkSkill extends Skill {
 			double dist = Math.hypot(xc - dest.x, yc - dest.y);
 			double time = dist / getDefaultSpeed(agent);// We use the default speed because the agent is not yet on the network
 
-			if(remainingTime >= time){
+			if(currentSimulation.remainingTime >= time){
 				currentLocation.setLocation(dest.x, dest.y);
 				agent.setLocation(currentLocation);
-				agentFromOutsideToInside = false;
-				agentInside = true;
+				currentSimulation.agentFromOutsideToInside = false;
+				currentSimulation.agentInside = true;
 			}
 			else{
-				double coef = remainingTime / time;
+				double coef = currentSimulation.remainingTime / time;
 				double x_inter = xc + (dest.x - xc) * coef;
 				double y_inter = yc + (dest.y - yc) * coef;
 				currentLocation.setLocation(x_inter, y_inter);
 				agent.setLocation(currentLocation);
 			}
 
-			remainingTime -= time;
+			currentSimulation.remainingTime -= time;
 		}
 	}
 
 	private IList movingInside(final IScope scope, final IAgent agent, final ILocation target){
-		if(agentInside && remainingTime > 0){
+		if(currentSimulation.agentInside && currentSimulation.remainingTime > 0){
 			double mark = (Double) scope.getArg(IKeywordMoNAdditional.MARK, IType.FLOAT);
 			ILocation currentLocation = (ILocation) agent.getLocation().copy(scope);
 			// It follows the path on the graph, node by node
 			IList gl = GamaListFactory.create();
 
 			// Does the agent need to reach the next Node?
-			if(!agentOnANode){
-				moveAlongEdge(scope, agent, target, currentGsPathEdge.get(0));
+			if(!currentSimulation.agentOnANode){
+				moveAlongEdge(scope, agent, target, currentSimulation.currentGsPathEdge.get(0));
 				// Moreover, if the agent is at the last part of its path, and if he has some remaining time, then, it means that he will leave the network
-				if(currentGsPathEdge.size()== 1 && remainingTime >= 0){
+				if(currentSimulation.currentGsPathEdge.size()== 1 && currentSimulation.remainingTime >= 0){
 					// Thus, we pop the current edge of the path and the node (the last ones)
-					gl.addValue(scope, currentGsPathEdge.remove(0).getAttribute("gama_agent"));
-					currentGsPathNode.remove(0);
-					agentFromInsideToOutside = true;
-					agentInside = false;
+					gl.addValue(scope, currentSimulation.currentGsPathEdge.remove(0).getAttribute("gama_agent"));
+					currentSimulation.currentGsPathNode.remove(0);
+					currentSimulation.agentFromInsideToOutside = true;
+					currentSimulation.agentInside = false;
 				}
 			}
 
-			if(currentGsPathNode.isEmpty()){
-				agentFromInsideToOutside = true;
-				agentInside = false;
+			if(currentSimulation.currentGsPathNode.isEmpty()){
+				currentSimulation.agentFromInsideToOutside = true;
+				currentSimulation.agentInside = false;
 			}
 
-			while(remainingTime > 0 && !currentGsPathEdge.isEmpty()){
-				Edge edge = currentGsPathEdge.get(0);
-				double time = edge.getNumber(currentDataNetwork.lengthAttribute)*100000 / (edge.getNumber(currentDataNetwork.speedAttribute)*1000/3600);
+			while(currentSimulation.remainingTime > 0 && !currentSimulation.currentGsPathEdge.isEmpty()){
+				Edge edge = currentSimulation.currentGsPathEdge.get(0);
+				double time = edge.getNumber(currentSimulation.currentDataNetwork.lengthAttribute)*100000 / (edge.getNumber(currentSimulation.currentDataNetwork.speedAttribute)*1000/3600);
 				// currentGsPath.size()== 1 when the agent is at the end of the path,
 				// therefore it must stop before the next node in order to leave the network
 				// But he can also stop before the end of an edge if he has not enough remaining time
-				if(currentGsPathEdge.size()== 1 || remainingTime < time){
+				if(currentSimulation.currentGsPathEdge.size()== 1 || currentSimulation.remainingTime < time){
 					// The moving agent stops between two nodes somewhere on the edge
 					// Move the agent to this "somewhere"
 					moveAlongEdge(scope, agent, target, edge);
 					// Moreover, if the agent is at the last part of its path, and if he has some remaining time, then, it means that he will leave the network
-					if(currentGsPathEdge.size()== 1 && remainingTime >= 0){
+					if(currentSimulation.currentGsPathEdge.size()== 1 && currentSimulation.remainingTime >= 0){
 						// Thus, we pop the current edge of the path and the node (the last ones)
-						currentGsPathEdge.remove(0);
-						currentGsPathNode.remove(0);
-						agentFromInsideToOutside = true;
-						agentInside = false;
+						currentSimulation.currentGsPathEdge.remove(0);
+						currentSimulation.currentGsPathNode.remove(0);
+						currentSimulation.agentFromInsideToOutside = true;
+						currentSimulation.agentInside = false;
 					}
 				}
 				else{
 					// We move the agent to the next node
-					agentOnANode = true;
-					currentGsPathEdge.get(0).setAttribute("cumulative_marks", currentGsPathEdge.get(0).getNumber("cumulative_marks") + mark);
-					currentGsPathEdge.get(0).setAttribute("current_marks", currentGsPathEdge.get(0).getNumber("current_marks") + mark);
-					currentGsPathEdge.get(0).setAttribute("cumulative_nb_agents", currentGsPathEdge.get(0).getNumber("cumulative_nb_agents") + 1);
-					currentGsPathEdge.get(0).setAttribute("current_nb_agents", currentGsPathEdge.get(0).getNumber("current_nb_agents") + 1);
-					currentGsPathEdge.remove(0);
+					currentSimulation.agentOnANode = true;
+					currentSimulation.currentGsPathEdge.get(0).setAttribute("cumulative_marks", currentSimulation.currentGsPathEdge.get(0).getNumber("cumulative_marks") + mark);
+					currentSimulation.currentGsPathEdge.get(0).setAttribute("current_marks", currentSimulation.currentGsPathEdge.get(0).getNumber("current_marks") + mark);
+					currentSimulation.currentGsPathEdge.get(0).setAttribute("cumulative_nb_agents", currentSimulation.currentGsPathEdge.get(0).getNumber("cumulative_nb_agents") + 1);
+					currentSimulation.currentGsPathEdge.get(0).setAttribute("current_nb_agents", currentSimulation.currentGsPathEdge.get(0).getNumber("current_nb_agents") + 1);
+					currentSimulation.currentGsPathEdge.remove(0);
 					// Set the location of the agent to the next node
-					if(currentGsPathNode.get(0).hasAttribute("gama_agent"))
-						currentLocation = new GamaPoint(((IAgent)currentGsPathNode.get(0).getAttribute("gama_agent")).getLocation());
+					if(currentSimulation.currentGsPathNode.get(0).hasAttribute("gama_agent"))
+						currentLocation = new GamaPoint(((IAgent)currentSimulation.currentGsPathNode.get(0).getAttribute("gama_agent")).getLocation());
 					else
-						currentLocation = new GamaPoint( currentGsPathNode.get(0).getNumber("x"), currentGsPathNode.get(0).getNumber("y"));
-					currentGsPathNode.remove(0);
+						currentLocation = new GamaPoint( currentSimulation.currentGsPathNode.get(0).getNumber("x"), currentSimulation.currentGsPathNode.get(0).getNumber("y"));
+					currentSimulation.currentGsPathNode.remove(0);
 					//We set the location of the agent in order to make the move
 					agent.setLocation(currentLocation);
-					remainingTime -= time;
+					currentSimulation.remainingTime -= time;
 				}
 				// We add the gama agent associated to this edge
 				gl.addValue(scope, edge.getAttribute("gama_agent"));
@@ -505,7 +521,7 @@ public class MovingOnNetworkSkill extends Skill {
 	}
 
 	private void movingFromInsideToOutside(final IScope scope, final IAgent agent, final ILocation target){
-		if(agentFromInsideToOutside && remainingTime > 0){
+		if(currentSimulation.agentFromInsideToOutside && currentSimulation.remainingTime > 0){
 			GamaPoint currentLocation = (GamaPoint) agent.getLocation().copy(scope);
 			// Compute the time needed to go to the next side of the segment
 			double x_agent = currentLocation.getX();
@@ -519,18 +535,18 @@ public class MovingOnNetworkSkill extends Skill {
 				double time = dist / getDefaultSpeed(agent);
 
 				// Move the agent
-				if(remainingTime >= time){
+				if(currentSimulation.remainingTime >= time){
 					currentLocation.setLocation(x_target, y_target);
-					currentTarget = null;
+					currentSimulation.currentTarget = null;
 				}
 				else{
-					double coef = remainingTime / time;
+					double coef = currentSimulation.remainingTime / time;
 					double x_inter = x_agent + (x_target - x_agent) * coef;
 					double y_inter = y_agent + (y_target - y_agent) * coef;
 					currentLocation.setLocation(x_inter, y_inter);
 				}
 				agent.setLocation(currentLocation);
-				remainingTime -= time;
+				currentSimulation.remainingTime -= time;
 			}
 		}
 	}
@@ -552,26 +568,26 @@ public class MovingOnNetworkSkill extends Skill {
 		e.setAttribute("current_nb_agents", e.getNumber("current_nb_agents") + 1);
 
 		GamaPoint currentLocation = (GamaPoint) agent.getLocation().copy(scope);
-		agentOnANode = false;
+		currentSimulation.agentOnANode = false;
 		// Get the geometry of the edge
 		IShape shape = ((IAgent)(e.getAttribute("gama_agent"))).getGeometry();
 		final Coordinate coords[] = shape.getInnerGeometry().getCoordinates();
 
 		// Determine in which way we must browse the list of segments
 		boolean incrementWay = true;
-		if(coords[coords.length-1].x != currentGsPathNode.get(0).getNumber("x") || coords[coords.length-1].y != currentGsPathNode.get(0).getNumber("y")){
+		if(coords[coords.length-1].x != currentSimulation.currentGsPathNode.get(0).getNumber("x") || coords[coords.length-1].y != currentSimulation.currentGsPathNode.get(0).getNumber("y")){
 			incrementWay = false;
-			if(indexSegment == -1)
-				indexSegment = coords.length-2;
+			if(currentSimulation.indexSegment == -1)
+				currentSimulation.indexSegment = coords.length-2;
 		}
 		else{
-			if(indexSegment == -1)
-				indexSegment = 1;
+			if(currentSimulation.indexSegment == -1)
+				currentSimulation.indexSegment = 1;
 		}
 		// Determine if the agent must stop before the end of the edge because he must leave the network
 		// If yes, we look for the segment that the agent must leave
 		int indexClosestSegmentToTarget = -1;
-		if(e.equals(currentGsPathEdge.get(currentGsPathEdge.size()-1))){
+		if(e.equals(currentSimulation.currentGsPathEdge.get(currentSimulation.currentGsPathEdge.size()-1))){
 			double distTargetToNetwork = Double.MAX_VALUE;
 			Coordinate[] tempCoord = new Coordinate[2];
 			for ( int j = 0; j < coords.length - 1; j++ ) {
@@ -586,45 +602,45 @@ public class MovingOnNetworkSkill extends Skill {
 			}
 		}
 		// Browse the segment and move progressively the agent on the edge
-		while(remainingTime >= 0 && indexSegment >= 0 && indexSegment < coords.length){
+		while(currentSimulation.remainingTime >= 0 && currentSimulation.indexSegment >= 0 && currentSimulation.indexSegment < coords.length){
 			Coordinate dest;
-			if(indexClosestSegmentToTarget != -1 && (indexSegment == indexClosestSegmentToTarget || (indexSegment+1) == indexClosestSegmentToTarget) )
-				dest = getClosestLocation(new Coordinate(target.getX(), target.getY()), coords[indexSegment], coords[indexSegment+1]);
+			if(indexClosestSegmentToTarget != -1 && (currentSimulation.indexSegment == indexClosestSegmentToTarget || (currentSimulation.indexSegment+1) == indexClosestSegmentToTarget) )
+				dest = getClosestLocation(new Coordinate(target.getX(), target.getY()), coords[currentSimulation.indexSegment], coords[currentSimulation.indexSegment+1]);
 			else 
-				dest = coords[indexSegment];
+				dest = coords[currentSimulation.indexSegment];
 
 			// Compute the time needed to go to the next side of the segment
 			double x_agent = currentLocation.getX();
 			double y_agent = currentLocation.getY();
 
 			double dist = Math.sqrt((x_agent - dest.x)*(x_agent - dest.x) + (y_agent - dest.y)*(y_agent - dest.y));
-			double time = dist / (e.getNumber(currentDataNetwork.speedAttribute)*1000/3600);
+			double time = dist / (e.getNumber(currentSimulation.currentDataNetwork.speedAttribute)*1000/3600);
 
 			// Move the agent
-			if(remainingTime >= time){
+			if(currentSimulation.remainingTime >= time){
 				currentLocation.setLocation(dest.x, dest.y);
 				// Increment or decrement i according to the way that we browse the list of segments
 				if(incrementWay)
-					indexSegment++;
+					currentSimulation.indexSegment++;
 				else
-					indexSegment--;
+					currentSimulation.indexSegment--;
 			}
 			else{
-				double coef = remainingTime/time;
+				double coef = currentSimulation.remainingTime/time;
 				double x_inter = x_agent + (dest.x-x_agent)*coef ;
 				double y_inter = y_agent + (dest.y-y_agent)*coef ;
 				currentLocation.setLocation(x_inter, y_inter);
 			}
 			agent.setLocation(currentLocation);
 			// Update the remaining time
-			remainingTime -= time;
+			currentSimulation.remainingTime -= time;
 		}
 
-		if(agent.getLocation().getX() == currentGsPathNode.get(0).getNumber("x") && agent.getLocation().getY() == currentGsPathNode.get(0).getNumber("y")){
-			agentOnANode = true;
-			currentGsPathEdge.remove(0);
-			currentGsPathNode.remove(0);
-			indexSegment = -1;
+		if(agent.getLocation().getX() == currentSimulation.currentGsPathNode.get(0).getNumber("x") && agent.getLocation().getY() == currentSimulation.currentGsPathNode.get(0).getNumber("y")){
+			currentSimulation.agentOnANode = true;
+			currentSimulation.currentGsPathEdge.remove(0);
+			currentSimulation.currentGsPathNode.remove(0);
+			currentSimulation.indexSegment = -1;
 		}
 	}
 
@@ -688,15 +704,15 @@ public class MovingOnNetworkSkill extends Skill {
 	}
 
 	private double computeShortestPath(final IScope scope, ILocation source, ILocation target){
-		if(currentDataNetwork.dijkstra == null){
-			currentDataNetwork.dijkstra = new Dijkstra(Dijkstra.Element.EDGE, "result", "gama_time");
-			currentDataNetwork.dijkstra.init(currentDataNetwork.graph);
+		if(currentSimulation.currentDataNetwork.dijkstra == null){
+			currentSimulation.currentDataNetwork.dijkstra = new Dijkstra(Dijkstra.Element.EDGE, "result", "gama_time");
+			currentSimulation.currentDataNetwork.dijkstra.init(currentSimulation.currentDataNetwork.graph);
 		}
 
 		/*
 		 *  Find the graphstream source and target node
 		 */
-		GraphTopology gt = (GraphTopology)(Cast.asTopology(scope, currentDataNetwork.gamaGraph));
+		GraphTopology gt = (GraphTopology)(Cast.asTopology(scope, currentSimulation.currentDataNetwork.gamaGraph));
 		ITopology topo = scope.getSimulation().getTopology();
 		// Find the source node
 		IAgent gamaSourceEdge = topo.getAgentClosestTo(scope, source, In.edgesOf(gt.getPlaces()));//gt.getAgentClosestTo(scope, source, In.edgesOf(gt.getPlaces()));
@@ -710,9 +726,9 @@ public class MovingOnNetworkSkill extends Skill {
 		/*
 		 *  Compute and get the path
 		 */
-		currentDataNetwork.dijkstra.setSource(sourceNode);
-		currentDataNetwork.dijkstra.compute();
-		Path p = currentDataNetwork.dijkstra.getPath(targetNode);
+		currentSimulation.currentDataNetwork.dijkstra.setSource(sourceNode);
+		currentSimulation.currentDataNetwork.dijkstra.compute();
+		Path p = currentSimulation.currentDataNetwork.dijkstra.getPath(targetNode);
 
 		double length = p.getPathWeight("gama_time");
 		final IAgent agent = getCurrentAgent(scope);
@@ -724,21 +740,21 @@ public class MovingOnNetworkSkill extends Skill {
 		// Add closest source edge to the path if it is missing
 		if(!p.contains(gsSourceEdge)){
 			sourceNode = gsSourceEdge.getNode1();
-			currentDataNetwork.dijkstra.setSource(sourceNode);
-			currentDataNetwork.dijkstra.compute();
-			p = currentDataNetwork.dijkstra.getPath(targetNode);
+			currentSimulation.currentDataNetwork.dijkstra.setSource(sourceNode);
+			currentSimulation.currentDataNetwork.dijkstra.compute();
+			p = currentSimulation.currentDataNetwork.dijkstra.getPath(targetNode);
 		}
 
 		// Add closest target edge to the path if it is missing
 		if(!p.contains(gsTargetEdge)){
 			targetNode = gsTargetEdge.getNode1();
-			p = currentDataNetwork.dijkstra.getPath(targetNode);
+			p = currentSimulation.currentDataNetwork.dijkstra.getPath(targetNode);
 		}
 
-		currentGsPathEdge = p.getEdgePath();
-		currentGsPathNode = p.getNodePath();
-		if(currentGsPathEdge.size() != 0)
-			currentGsPathNode.remove(0);// The first node is useless
+		currentSimulation.currentGsPathEdge = p.getEdgePath();
+		currentSimulation.currentGsPathNode = p.getNodePath();
+		if(currentSimulation.currentGsPathEdge.size() != 0)
+			currentSimulation.currentGsPathNode.remove(0);// The first node is useless
 
 		return p.getPathWeight("gama_time");
 	}
@@ -750,7 +766,7 @@ public class MovingOnNetworkSkill extends Skill {
 	 * @param gamaGraph
 	 * @return The Graphstream graph
 	 */
-	private static void getGraphstreamGraphFromGamaGraph(IScope scope, final IGraph gamaGraph, Graph g) {
+	private static void getGraphstreamGraphFromGamaGraph(IScope scope, DataSimulation currentSimulation, final IGraph gamaGraph, Graph g) {
 		Map<Object, Node> gamaNode2graphStreamNode = new HashMap<Object, Node>(gamaGraph._internalNodesSet().size());
 		// add nodes
 		for ( Object v : gamaGraph._internalVertexMap().keySet() ) {
@@ -790,7 +806,7 @@ public class MovingOnNetworkSkill extends Skill {
 						if(value != null)
 							e.addAttribute(key.toString(), value.toString());
 					}
-					e.addAttribute("gama_time", e.getNumber(currentDataNetwork.lengthAttribute) * e.getNumber(currentDataNetwork.speedAttribute));
+					e.addAttribute("gama_time", e.getNumber(currentSimulation.currentDataNetwork.lengthAttribute) * e.getNumber(currentSimulation.currentDataNetwork.speedAttribute));
 					e.setAttribute("current_marks", 0.0);
 					e.setAttribute("cumulative_marks", 0.0);
 					e.setAttribute("cumulative_nb_agents", 0.0);
