@@ -175,7 +175,7 @@ public class MovingOnNetworkSkill extends Skill {
 		String name = (String) scope.getArg(IKeywordMoNAdditional.NAME, IType.STRING);
 		GamaGraph gamaGraph = (GamaGraph) scope.getArg(IKeywordMoNAdditional.GRAPH, IType.GRAPH);
 		dn.gamaGraph = gamaGraph;
-		Graph graph = new MultiGraph("tmpGraph", true, false);
+		Graph graph = new MultiGraph(name, true, false);
 		dn.graph = graph;
 		Dijkstra dijkstra = null;
 		dn.dijkstra = dijkstra;
@@ -272,7 +272,7 @@ public class MovingOnNetworkSkill extends Skill {
 			currentSimulation.currentCycle = scope.getClock().getCycle();
 			for(DataSimulation.DataNetwork dn : currentSimulation.listNetwork.values()){
 				// Color the Gama network according to the flow let by agents
-				colorGamaGraph(dn.graph, "current_marks");//cumulative_nb_agents//cumulative_marks
+				colorGamaGraph(dn.graph, "cumulative_marks");//cumulative_nb_agents//cumulative_marks//current_nb_agents
 				dn.graph.stepBegins(currentSimulation.currentCycle);
 				for(Edge e : dn.graph.getEachEdge()){
 					if(e.getNumber("current_marks") != 0)
@@ -853,10 +853,52 @@ public class MovingOnNetworkSkill extends Skill {
 		for(int i = 0; i < listEdge.size(); i++){
 			for(Edge e : listEdge.get(i).getEdges() ){
 				if(listEdge.size() != 1){
-					((IAgent)(e.getAttribute("gama_agent"))).setAttribute("colorValue", ( (200.0 - 30) / (listEdge.size() - 1)) * i + 30);
+					// Color edges
+					// 	#fed976 kind of yellow
+					// 	#feb24c
+					// 	#fd8d3c
+					// 	#fc4e2a
+					// 	#e31a1c
+					// 	#bd0026
+					// 	#800026 strong red
+					if(i * 10 < (listEdge.size()/7.) * 10) {
+						((IAgent)(e.getAttribute("gama_agent"))).setAttribute("colorRVBValue", Integer.parseInt("800026",16));
+					}
+					else if(i * 10 < (listEdge.size()/7.) * 20) {
+						((IAgent)(e.getAttribute("gama_agent"))).setAttribute("colorRVBValue", Integer.parseInt("bd0026",16));
+					}
+					else if(i * 10 < (listEdge.size()/7.) * 30) {
+						((IAgent)(e.getAttribute("gama_agent"))).setAttribute("colorRVBValue", Integer.parseInt("e31a1c",16));
+					}
+					else if(i * 10 < (listEdge.size()/7.) * 40) {
+						((IAgent)(e.getAttribute("gama_agent"))).setAttribute("colorRVBValue", Integer.parseInt("fc4e2a",16));
+					}
+					else if(i * 10 < (listEdge.size()/7.) * 50) {
+						((IAgent)(e.getAttribute("gama_agent"))).setAttribute("colorRVBValue", Integer.parseInt("fd8d3c",16));
+					}
+					else if(i * 10 < (listEdge.size()/7.) * 60) {
+						((IAgent)(e.getAttribute("gama_agent"))).setAttribute("colorRVBValue", Integer.parseInt("feb24c",16));
+					}
+					else  {
+						((IAgent)(e.getAttribute("gama_agent"))).setAttribute("colorRVBValue", Integer.parseInt("fed976",16));
+					}
+					// And give different size to edges
+					if(i * 10 < (listEdge.size()/4.) * 10) {
+						((IAgent)(e.getAttribute("gama_agent"))).setAttribute("sizeShape", 3);
+					}
+					else if(i * 10 < (listEdge.size()/4.) * 20) {
+						((IAgent)(e.getAttribute("gama_agent"))).setAttribute("sizeShape", 2);
+					}
+					else if(i * 10 < (listEdge.size()/4.) * 30) {
+						((IAgent)(e.getAttribute("gama_agent"))).setAttribute("sizeShape", 1);
+					}
+					else  {
+						((IAgent)(e.getAttribute("gama_agent"))).setAttribute("sizeShape", 0);
+					}
 				}
 				else {
-					((IAgent)(e.getAttribute("gama_agent"))).setAttribute("colorValue", 255);
+					((IAgent)(e.getAttribute("gama_agent"))).setAttribute("colorRVBValue", Integer.parseInt("fed976",16));
+					((IAgent)(e.getAttribute("gama_agent"))).setAttribute("sizeShape", 1);
 				}
 			}
 		}
