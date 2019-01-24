@@ -275,10 +275,16 @@ public class MovingOnNetworkSkill extends Skill {
 				colorGamaGraph(dn.graph, "cumulative_marks");//cumulative_nb_agents//cumulative_marks//current_nb_agents
 				dn.graph.stepBegins(currentSimulation.currentCycle);
 				for(Edge e : dn.graph.getEachEdge()){
-					if(e.getNumber("current_marks") != 0)
+					e.setAttribute("current_volume", 0);
+					((IAgent)(e.getAttribute("gama_agent"))).setAttribute("current_volume", e.getNumber("current_volume"));
+					if(e.getNumber("current_marks") != 0) {
 						e.setAttribute("current_marks", e.getNumber("current_marks")*0.95);
-					if(e.getNumber("current_nb_agents") != 0)
+						((IAgent)(e.getAttribute("gama_agent"))).setAttribute("current_marks", e.getNumber("current_marks"));
+					}
+					if(e.getNumber("current_nb_agents") != 0) {
 						e.setAttribute("current_nb_agents", e.getNumber("current_nb_agents")*0.95);
+						((IAgent)(e.getAttribute("gama_agent"))).setAttribute("current_nb_agents", e.getNumber("current_nb_agents"));
+					}
 				}
 			}
 		}
@@ -496,9 +502,15 @@ public class MovingOnNetworkSkill extends Skill {
 					// We move the agent to the next node
 					currentSimulation.agentOnANode = true;
 					currentSimulation.currentGsPathEdge.get(0).setAttribute("cumulative_marks", currentSimulation.currentGsPathEdge.get(0).getNumber("cumulative_marks") + mark);
+					((IAgent)(currentSimulation.currentGsPathEdge.get(0).getAttribute("gama_agent"))).setAttribute("cumulative_marks", currentSimulation.currentGsPathEdge.get(0).getNumber("cumulative_marks"));
 					currentSimulation.currentGsPathEdge.get(0).setAttribute("current_marks", currentSimulation.currentGsPathEdge.get(0).getNumber("current_marks") + mark);
+					((IAgent)(currentSimulation.currentGsPathEdge.get(0).getAttribute("gama_agent"))).setAttribute("current_marks", currentSimulation.currentGsPathEdge.get(0).getNumber("current_marks"));
+					currentSimulation.currentGsPathEdge.get(0).setAttribute("current_volume", currentSimulation.currentGsPathEdge.get(0).getNumber("current_volume") + mark);
+					((IAgent)(currentSimulation.currentGsPathEdge.get(0).getAttribute("gama_agent"))).setAttribute("current_volume", currentSimulation.currentGsPathEdge.get(0).getNumber("current_volume"));
 					currentSimulation.currentGsPathEdge.get(0).setAttribute("cumulative_nb_agents", currentSimulation.currentGsPathEdge.get(0).getNumber("cumulative_nb_agents") + 1);
+					((IAgent)(currentSimulation.currentGsPathEdge.get(0).getAttribute("gama_agent"))).setAttribute("cumulative_nb_agents", currentSimulation.currentGsPathEdge.get(0).getNumber("cumulative_nb_agents"));
 					currentSimulation.currentGsPathEdge.get(0).setAttribute("current_nb_agents", currentSimulation.currentGsPathEdge.get(0).getNumber("current_nb_agents") + 1);
+					((IAgent)(currentSimulation.currentGsPathEdge.get(0).getAttribute("gama_agent"))).setAttribute("current_nb_agents", currentSimulation.currentGsPathEdge.get(0).getNumber("current_nb_agents"));
 					currentSimulation.currentGsPathEdge.remove(0);
 					// Set the location of the agent to the next node
 					if(currentSimulation.currentGsPathNode.get(0).hasAttribute("gama_agent"))
@@ -563,9 +575,15 @@ public class MovingOnNetworkSkill extends Skill {
 	private void moveAlongEdge(final IScope scope, final IAgent agent, final ILocation target, Edge e){
 		double mark = (Double) scope.getArg(IKeywordMoNAdditional.MARK, IType.FLOAT);
 		e.setAttribute("cumulative_marks", e.getNumber("cumulative_marks") + mark);
-		e.setAttribute("current_marks", e.getNumber("current_marks") + mark);
-		e.setAttribute("cumulative_nb_agents", e.getNumber("cumulative_nb_agents") + 1);
+		((IAgent)(e.getAttribute("gama_agent"))).setAttribute("cumulative_marks", e.getNumber("cumulative_marks") + mark);
+		e.setAttribute("current_marks", e.getNumber("current_marks"));
+		((IAgent)(e.getAttribute("gama_agent"))).setAttribute("current_marks", e.getNumber("current_marks") + mark);
+		e.setAttribute("current_volume", e.getNumber("current_volume"));
+		((IAgent)(e.getAttribute("gama_agent"))).setAttribute("current_volume", e.getNumber("current_volume") + mark);
+		e.setAttribute("cumulative_nb_agents", e.getNumber("cumulative_nb_agents"));
+		((IAgent)(e.getAttribute("gama_agent"))).setAttribute("cumulative_nb_agents", e.getNumber("cumulative_nb_agents") + 1);
 		e.setAttribute("current_nb_agents", e.getNumber("current_nb_agents") + 1);
+		((IAgent)(e.getAttribute("gama_agent"))).setAttribute("current_nb_agents", e.getNumber("current_nb_agents"));
 
 		GamaPoint currentLocation = (GamaPoint) agent.getLocation().copy(scope);
 		currentSimulation.agentOnANode = false;
