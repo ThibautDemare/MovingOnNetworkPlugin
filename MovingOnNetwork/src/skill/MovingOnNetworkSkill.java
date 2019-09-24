@@ -45,6 +45,7 @@ import msi.gama.precompiler.GamlAnnotations;
 import msi.gama.runtime.GAMA;
 import msi.gama.runtime.IScope;
 import msi.gama.runtime.exceptions.GamaRuntimeException;
+import msi.gama.util.GamaDate;
 import msi.gama.util.GamaListFactory;
 import msi.gama.util.IList;
 import msi.gama.util.graph.GamaGraph;
@@ -150,6 +151,19 @@ public class MovingOnNetworkSkill extends Skill {
 	/*
 	 * Actions/methods
 	 */
+
+	@action(
+			name = "leave_building",
+			doc =
+			@doc(value = "Inform the building that we leave it.", examples = { @example("do leave_building;") })
+			)
+	public void leaveBuilding(final IScope scope) throws GamaRuntimeException {
+		IAgent v = (IAgent)getCurrentAgent(scope);
+		IAgent source = (IAgent) v.getAttribute("source");
+		String networkType = (String) v.getAttribute("networkType");
+		String destName = source.getName();
+		source.setAttribute("lastVehicleDepartureDest_"+networkType+"_"+destName, scope.getClock().getCurrentDate());
+	}
 
 	@action(
 			name = "add_network",
