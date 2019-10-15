@@ -392,7 +392,7 @@ public class MovingOnNetworkSkill extends Skill {
 			double time = dist / getDefaultSpeed(agent);// We use the default speed because the agent is not yet on the network
 
 			if(currentSimulation.remainingTime >= time){
-				currentLocation.setLocation(dest.x, dest.y);
+				currentLocation.setLocation(dest.x, dest.y, currentLocation.getZ());
 				agent.setLocation(currentLocation);
 				currentSimulation.agentInside = true;
 			}
@@ -400,7 +400,7 @@ public class MovingOnNetworkSkill extends Skill {
 				double coef = currentSimulation.remainingTime / time;
 				double x_inter = xc + (dest.x - xc) * coef;
 				double y_inter = yc + (dest.y - yc) * coef;
-				currentLocation.setLocation(x_inter, y_inter);
+				currentLocation.setLocation(x_inter, y_inter, currentLocation.getZ());
 				agent.setLocation(currentLocation);
 			}
 
@@ -451,7 +451,7 @@ public class MovingOnNetworkSkill extends Skill {
 			double time = dist / getDefaultSpeed(agent);// We use the default speed because the agent is not yet on the network
 
 			if(currentSimulation.remainingTime >= time){
-				currentLocation.setLocation(dest.x, dest.y);
+				currentLocation.setLocation(dest.x, dest.y, currentLocation.getZ());
 				agent.setLocation(currentLocation);
 				currentSimulation.agentFromOutsideToInside = false;
 				currentSimulation.agentInside = true;
@@ -460,7 +460,7 @@ public class MovingOnNetworkSkill extends Skill {
 				double coef = currentSimulation.remainingTime / time;
 				double x_inter = xc + (dest.x - xc) * coef;
 				double y_inter = yc + (dest.y - yc) * coef;
-				currentLocation.setLocation(x_inter, y_inter);
+				currentLocation.setLocation(x_inter, y_inter, currentLocation.getZ());
 				agent.setLocation(currentLocation);
 			}
 
@@ -528,7 +528,7 @@ public class MovingOnNetworkSkill extends Skill {
 					currentSimulation.currentGsPathEdge.remove(0);
 					// Set the location of the agent to the next node
 					if(currentSimulation.currentGsPathNode.get(0).hasAttribute("gama_agent"))
-						currentLocation = new GamaPoint(((IAgent)currentSimulation.currentGsPathNode.get(0).getAttribute("gama_agent")).getLocation());
+						currentLocation = ((IAgent)currentSimulation.currentGsPathNode.get(0).getAttribute("gama_agent")).getLocation().toGamaPoint();
 					else
 						currentLocation = new GamaPoint( currentSimulation.currentGsPathNode.get(0).getNumber("x"), currentSimulation.currentGsPathNode.get(0).getNumber("y"));
 					currentSimulation.currentGsPathNode.remove(0);
@@ -562,14 +562,14 @@ public class MovingOnNetworkSkill extends Skill {
 
 				// Move the agent
 				if(currentSimulation.remainingTime >= time){
-					currentLocation.setLocation(x_target, y_target);
+					currentLocation.setLocation(x_target, y_target, currentLocation.getZ());
 					currentSimulation.currentTarget = null;
 				}
 				else{
 					double coef = currentSimulation.remainingTime / time;
 					double x_inter = x_agent + (x_target - x_agent) * coef;
 					double y_inter = y_agent + (y_target - y_agent) * coef;
-					currentLocation.setLocation(x_inter, y_inter);
+					currentLocation.setLocation(x_inter, y_inter, currentLocation.getZ());
 				}
 				agent.setLocation(currentLocation);
 				currentSimulation.remainingTime -= time;
@@ -650,7 +650,7 @@ public class MovingOnNetworkSkill extends Skill {
 
 			// Move the agent
 			if(currentSimulation.remainingTime >= time){
-				currentLocation.setLocation(dest.x, dest.y);
+				currentLocation.setLocation(dest.x, dest.y, currentLocation.getZ());
 				// Increment or decrement i according to the way that we browse the list of segments
 				if(incrementWay)
 					currentSimulation.indexSegment++;
@@ -661,7 +661,7 @@ public class MovingOnNetworkSkill extends Skill {
 				double coef = currentSimulation.remainingTime/time;
 				double x_inter = x_agent + (dest.x-x_agent)*coef ;
 				double y_inter = y_agent + (dest.y-y_agent)*coef ;
-				currentLocation.setLocation(x_inter, y_inter);
+				currentLocation.setLocation(x_inter, y_inter, currentLocation.getZ());
 			}
 			agent.setLocation(currentLocation);
 			// Update the remaining time
@@ -808,8 +808,8 @@ public class MovingOnNetworkSkill extends Skill {
 			if ( v instanceof IAgent ) {
 				IAgent a = (IAgent) v;
 				n.addAttribute("gama_agent", a);
-				for ( Object key : a.getAttributes().keySet() ) {
-					Object value = GraphUtilsGraphStream.preprocessGamaValue(a.getAttributes().get(key));
+				for ( Object key : a.getOrCreateAttributes().keySet() ) {
+					Object value = GraphUtilsGraphStream.preprocessGamaValue(a.getOrCreateAttributes().get(key));
 					if(value != null)
 						n.addAttribute(key.toString(), value.toString());
 				}
@@ -833,8 +833,8 @@ public class MovingOnNetworkSkill extends Skill {
 					IAgent a = (IAgent) edgeObj;
 					// e know a
 					e.addAttribute("gama_agent", a);
-					for ( Object key : a.getAttributes().keySet() ) {
-						Object value = GraphUtilsGraphStream.preprocessGamaValue(a.getAttributes().get(key));
+					for ( Object key : a.getOrCreateAttributes().keySet() ) {
+						Object value = GraphUtilsGraphStream.preprocessGamaValue(a.getOrCreateAttributes().get(key));
 						if(value != null)
 							e.addAttribute(key.toString(), value.toString());
 					}
