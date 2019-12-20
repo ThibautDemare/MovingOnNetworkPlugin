@@ -286,7 +286,12 @@ public class MovingOnNetworkSkill extends Skill {
 			currentSimulation.currentCycle = scope.getClock().getCycle();
 			for(DataSimulation.DataNetwork dn : currentSimulation.listNetwork.values()){
 				// Color the Gama network according to the flow let by agents
-				colorGamaGraph(dn.graph, "cumulative_marks");//cumulative_nb_agents//cumulative_marks//current_nb_agents
+
+				// ===============================================
+				// TODO the way to color the graph (which variable is considered and the 0.95%) should be parameters of go_to action available from GAMA for the user
+				// ===============================================
+
+				colorGamaGraph(dn.graph, "current_marks");// Available arguments : //cumulative_nb_agents//current_marks//current_nb_agents//cumulative_marks
 				dn.graph.stepBegins(currentSimulation.currentCycle);
 				for(Edge e : dn.graph.getEachEdge()){
 					e.setAttribute("current_volume", 0);
